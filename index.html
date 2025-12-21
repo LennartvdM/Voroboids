@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Voroboids - Voronoi Boids</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      body {
+        background: #0a0a0f;
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        font-family: system-ui, -apple-system, sans-serif;
+        color: #fff;
+        gap: 20px;
+        padding: 20px;
+      }
+      h1 {
+        font-size: 1.5rem;
+        font-weight: 300;
+        letter-spacing: 0.2em;
+        text-transform: uppercase;
+        color: #888;
+      }
+      .demo-area {
+        display: flex;
+        gap: 60px;
+        align-items: center;
+      }
+      .container-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 10px;
+      }
+      .container-label {
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: #555;
+      }
+      canvas {
+        border-radius: 8px;
+      }
+      .controls {
+        display: flex;
+        gap: 15px;
+        margin-top: 20px;
+      }
+      button {
+        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+        border: 1px solid #333;
+        color: #fff;
+        padding: 12px 24px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.875rem;
+        letter-spacing: 0.05em;
+        transition: all 0.2s ease;
+      }
+      button:hover {
+        background: linear-gradient(135deg, #2a2a4e 0%, #26315e 100%);
+        border-color: #555;
+        transform: translateY(-1px);
+      }
+      button:active {
+        transform: translateY(0);
+      }
+      .info {
+        font-size: 0.75rem;
+        color: #444;
+        max-width: 600px;
+        text-align: center;
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Voroboids</h1>
+    <div class="demo-area">
+      <div class="container-wrapper">
+        <canvas id="container-a" width="300" height="400"></canvas>
+        <span class="container-label">Container A</span>
+      </div>
+      <div class="container-wrapper">
+        <canvas id="container-b" width="300" height="400"></canvas>
+        <span class="container-label">Container B</span>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="migrate-right">Migrate A → B</button>
+      <button id="migrate-left">Migrate B → A</button>
+      <button id="reset">Reset</button>
+    </div>
+    <p class="info">
+      Voronoi cells that flow like symbiote blobs between containers.
+      Click migrate to watch them travel in a teh tarik arc.
+    </p>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

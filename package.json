@@ -1,0 +1,19 @@
+{
+  "name": "voroboids",
+  "version": "0.1.0",
+  "description": "Voronoi cells that behave like boids - flowing between containers like Venom symbiote",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/d3-delaunay": "^6.0.4",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.10"
+  },
+  "dependencies": {
+    "d3-delaunay": "^6.0.4"
+  }
+}
