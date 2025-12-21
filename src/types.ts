@@ -14,6 +14,9 @@ export interface BezierPath {
 
 export type VoroboidState = 'contained' | 'launching' | 'flying' | 'arriving' | 'settling';
 
+// Which side of the container is open (missing wall)
+export type OpeningSide = 'top' | 'bottom' | 'left' | 'right';
+
 export interface VoroboidConfig {
   id: number;
   color: string;
@@ -25,6 +28,39 @@ export interface ContainerBounds {
   y: number;
   width: number;
   height: number;
+}
+
+// Get the opening edge coordinates for a container
+export function getOpeningEdge(bounds: ContainerBounds, opening: OpeningSide): { start: Vec2; end: Vec2 } {
+  switch (opening) {
+    case 'top':
+      return { start: { x: bounds.x, y: bounds.y }, end: { x: bounds.x + bounds.width, y: bounds.y } };
+    case 'bottom':
+      return { start: { x: bounds.x, y: bounds.y + bounds.height }, end: { x: bounds.x + bounds.width, y: bounds.y + bounds.height } };
+    case 'left':
+      return { start: { x: bounds.x, y: bounds.y }, end: { x: bounds.x, y: bounds.y + bounds.height } };
+    case 'right':
+      return { start: { x: bounds.x + bounds.width, y: bounds.y }, end: { x: bounds.x + bounds.width, y: bounds.y + bounds.height } };
+  }
+}
+
+// Get the center point of an opening
+export function getOpeningCenter(bounds: ContainerBounds, opening: OpeningSide): Vec2 {
+  const edge = getOpeningEdge(bounds, opening);
+  return {
+    x: (edge.start.x + edge.end.x) / 2,
+    y: (edge.start.y + edge.end.y) / 2,
+  };
+}
+
+// Get outward direction from an opening
+export function getOpeningDirection(opening: OpeningSide): Vec2 {
+  switch (opening) {
+    case 'top': return { x: 0, y: -1 };
+    case 'bottom': return { x: 0, y: 1 };
+    case 'left': return { x: -1, y: 0 };
+    case 'right': return { x: 1, y: 0 };
+  }
 }
 
 export interface FlockConfig {
