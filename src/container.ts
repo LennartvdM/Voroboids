@@ -18,6 +18,9 @@ export class Container {
   absoluteX: number;
   absoluteY: number;
 
+  // Target container for ongoing migration
+  private targetContainer: Container | null = null;
+
   constructor(canvas: HTMLCanvasElement, opening: OpeningSide, absoluteX: number = 0, absoluteY: number = 0) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
@@ -51,20 +54,17 @@ export class Container {
 
   // Trigger migration to another container
   startMigration(targetContainer: Container): void {
-    // Calculate the offset between containers (for absolute positioning during flight)
-    const absoluteOffset = vec2(
-      targetContainer.absoluteX - this.absoluteX,
-      targetContainer.absoluteY - this.absoluteY
-    );
+    // Store source and target offsets for coordinate conversion
+    const sourceOffset = vec2(this.absoluteX, this.absoluteY);
+    const targetOffset = vec2(targetContainer.absoluteX, targetContainer.absoluteY);
 
     // Tell each voroboid to start migrating
     for (const v of this.voroboids) {
-      v.startMigration(targetContainer.bounds, targetContainer.opening, absoluteOffset);
+      v.startMigration(targetContainer.bounds, targetContainer.opening, sourceOffset, targetOffset);
     }
 
-    // Transfer voroboids to target (they'll handle their own navigation)
-    targetContainer.voroboids = this.voroboids;
-    this.voroboids = [];
+    // Store target for transfer during update (don't transfer immediately)
+    this.targetContainer = targetContainer;
   }
 
   // Update all voroboids
@@ -72,6 +72,30 @@ export class Container {
     // All voroboids see all others in the container for boid behaviors
     for (const voroboid of this.voroboids) {
       voroboid.update(deltaTime, this.voroboids, config);
+    }
+
+    // Check for voroboids that have exited and should be transferred
+    if (this.targetContainer) {
+      const toTransfer: Voroboid[] = [];
+
+      for (const v of this.voroboids) {
+        // When voroboid enters "in flight" mode, its position has been converted
+        // to target local coords and it should be transferred
+        if (v.isInFlight) {
+          toTransfer.push(v);
+        }
+      }
+
+      // Transfer voroboids to target container
+      for (const v of toTransfer) {
+        this.voroboids = this.voroboids.filter(x => x !== v);
+        this.targetContainer.voroboids.push(v);
+      }
+
+      // Clear target reference once all voroboids have been transferred
+      if (this.voroboids.length === 0) {
+        this.targetContainer = null;
+      }
     }
   }
 

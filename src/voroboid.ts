@@ -26,7 +26,13 @@ export class Voroboid {
   // Target awareness (set when migrating)
   targetBounds: ContainerBounds | null = null;
   targetOpening: OpeningSide | null = null;
-  targetAbsoluteOffset: Vec2 = vec2(0, 0); // Offset from local to absolute coords
+
+  // Coordinate system offsets for migration
+  sourceAbsoluteOffset: Vec2 = vec2(0, 0); // Source container's screen position
+  targetAbsoluteOffset: Vec2 = vec2(0, 0); // Target container's screen position
+
+  // Track if we've exited source and are in flight (using absolute coords)
+  isInFlight: boolean = false;
 
   // For rendering blob shape
   blobRadius: number = 25;
@@ -52,11 +58,18 @@ export class Voroboid {
   }
 
   // Start migration to target container
-  startMigration(targetBounds: ContainerBounds, targetOpening: OpeningSide, absoluteOffset: Vec2): void {
+  startMigration(
+    targetBounds: ContainerBounds,
+    targetOpening: OpeningSide,
+    sourceOffset: Vec2,
+    targetOffset: Vec2
+  ): void {
     this.mode = 'migrating';
     this.targetBounds = targetBounds;
     this.targetOpening = targetOpening;
-    this.targetAbsoluteOffset = absoluteOffset;
+    this.sourceAbsoluteOffset = sourceOffset;
+    this.targetAbsoluteOffset = targetOffset;
+    this.isInFlight = false;
     this.morphProgress = 1; // Full blob mode while migrating
   }
 
@@ -66,6 +79,7 @@ export class Voroboid {
     this.containerOpening = this.targetOpening;
     this.targetBounds = null;
     this.targetOpening = null;
+    this.isInFlight = false;
     this.mode = 'settled';
   }
 
@@ -96,13 +110,12 @@ export class Voroboid {
     } else if (this.mode === 'migrating') {
       // When migrating: navigate through opening, head to target
 
-      if (this.containerBounds && this.containerOpening) {
+      if (!this.isInFlight && this.containerBounds && this.containerOpening) {
         // Still in source container - head toward a point OUTSIDE the opening
-        // This ensures they actually exit, not just reach the edge
         const exitTarget = this.getExitTarget(this.containerBounds, this.containerOpening, 60);
         const toExit = sub(exitTarget, this.position);
 
-        // Always attract toward exit point (don't stop when close)
+        // Always attract toward exit point
         const exitAttraction = mul(normalize(toExit), config.maxSpeed * 0.8);
         this.applyForce(exitAttraction);
 
@@ -112,18 +125,24 @@ export class Voroboid {
 
         // Check if we've exited through opening
         if (this.hasExitedContainer(this.containerBounds, this.containerOpening)) {
+          // Convert position: source local -> absolute -> target local
+          const absX = this.position.x + this.sourceAbsoluteOffset.x;
+          const absY = this.position.y + this.sourceAbsoluteOffset.y;
+          this.position = vec2(
+            absX - this.targetAbsoluteOffset.x,
+            absY - this.targetAbsoluteOffset.y
+          );
+
           this.containerBounds = null;
           this.containerOpening = null;
+          this.isInFlight = true;
         }
-      } else if (this.targetBounds && this.targetOpening) {
-        // In flight - head toward target opening
+      } else if (this.isInFlight && this.targetBounds && this.targetOpening) {
+        // In flight (now using target local coords) - head toward target entry
         const targetEntry = this.getExitTarget(this.targetBounds, this.targetOpening, 30);
-        // Adjust for absolute positioning
-        const absoluteTarget = add(targetEntry, this.targetAbsoluteOffset);
-        const toTarget = sub(absoluteTarget, this.position);
-        const distToTarget = magnitude(toTarget);
+        const toTarget = sub(targetEntry, this.position);
 
-        // Strong attraction to target
+        // Strong attraction to target entry point
         const targetAttraction = mul(normalize(toTarget), config.maxSpeed);
         this.applyForce(targetAttraction);
 
@@ -131,9 +150,7 @@ export class Voroboid {
         this.applyForce(mul(this.velocity, -0.02));
 
         // Check if we've entered target container
-        if (distToTarget < 30) {
-          // Transition position to target container's local coords
-          this.position = sub(this.position, this.targetAbsoluteOffset);
+        if (this.isInsideContainer(this.targetBounds)) {
           this.arriveAtTarget();
         }
       }
@@ -303,6 +320,14 @@ export class Voroboid {
       case 'left': return this.position.x < bounds.x - 10;
       case 'right': return this.position.x > bounds.x + bounds.width + 10;
     }
+  }
+
+  // Check if voroboid is inside a container
+  private isInsideContainer(bounds: ContainerBounds): boolean {
+    return this.position.x > bounds.x &&
+           this.position.x < bounds.x + bounds.width &&
+           this.position.y > bounds.y &&
+           this.position.y < bounds.y + bounds.height;
   }
 
   // Get current shape for rendering
