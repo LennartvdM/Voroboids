@@ -40,6 +40,8 @@ system.start();
 const migrateRightBtn = document.getElementById('migrate-right') as HTMLButtonElement;
 const migrateLeftBtn = document.getElementById('migrate-left') as HTMLButtonElement;
 const resetBtn = document.getElementById('reset') as HTMLButtonElement;
+const rotateABtn = document.getElementById('rotate-a') as HTMLButtonElement;
+const rotateBBtn = document.getElementById('rotate-b') as HTMLButtonElement;
 
 migrateRightBtn.addEventListener('click', () => {
   system.migrate('a', 'b');
@@ -52,6 +54,14 @@ migrateLeftBtn.addEventListener('click', () => {
 resetBtn.addEventListener('click', () => {
   // Re-initialize in container A
   system.initializeVoroboids('a', voroboidConfigs);
+});
+
+rotateABtn.addEventListener('click', () => {
+  system.rotateContainer('a');
+});
+
+rotateBBtn.addEventListener('click', () => {
+  system.rotateContainer('b');
 });
 
 // Handle window resize

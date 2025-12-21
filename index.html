@@ -46,6 +46,10 @@
         letter-spacing: 0.1em;
         color: #555;
       }
+      .rotate-btn {
+        padding: 8px 16px;
+        font-size: 0.75rem;
+      }
       canvas {
         border-radius: 8px;
       }
@@ -86,10 +90,12 @@
     <h1>Voroboids</h1>
     <div class="demo-area">
       <div class="container-wrapper">
+        <button id="rotate-a" class="rotate-btn">Rotate A ↻</button>
         <canvas id="container-a" width="300" height="400"></canvas>
         <span class="container-label">Container A</span>
       </div>
       <div class="container-wrapper">
+        <button id="rotate-b" class="rotate-btn">Rotate B ↻</button>
         <canvas id="container-b" width="300" height="400"></canvas>
         <span class="container-label">Container B</span>
       </div>

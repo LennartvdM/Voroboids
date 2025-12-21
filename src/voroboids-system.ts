@@ -105,6 +105,14 @@ export class VoroboidsSystem {
       container.absoluteY = rect.top;
     }
   }
+
+  // Rotate a container's opening (cycles through: right -> bottom -> left -> top)
+  rotateContainer(containerId: string): void {
+    const container = this.containers.get(containerId);
+    if (container) {
+      container.rotateOpening();
+    }
+  }
 }
 
 // Generate color palette

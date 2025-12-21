@@ -170,6 +170,19 @@ export class Container {
     return `rgb(${Math.min(255, Math.floor(r + (255 - r) * factor))}, ${Math.min(255, Math.floor(g + (255 - g) * factor))}, ${Math.min(255, Math.floor(b + (255 - g) * factor))})`;
   }
 
+  // Rotate opening by 45 degrees (cycles through 8 positions, but only 4 are sides)
+  // For simplicity: right -> bottom -> left -> top -> right
+  rotateOpening(): void {
+    const sequence: OpeningSide[] = ['right', 'bottom', 'left', 'top'];
+    const currentIndex = sequence.indexOf(this.opening);
+    this.opening = sequence[(currentIndex + 1) % 4];
+
+    // Update all voroboids with new container opening
+    for (const v of this.voroboids) {
+      v.setContainer(this.bounds, this.opening);
+    }
+  }
+
   // Check if all voroboids are settled
   isSettled(): boolean {
     return this.voroboids.every(v => v.mode === 'settled');
