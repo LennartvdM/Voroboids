@@ -15,9 +15,10 @@ const system = new VoroboidsSystem({
 const canvasA = document.getElementById('container-a') as HTMLCanvasElement;
 const canvasB = document.getElementById('container-b') as HTMLCanvasElement;
 
-// Register containers
-system.registerContainer('a', canvasA);
-system.registerContainer('b', canvasB);
+// Register containers with their openings facing each other
+// Container A opens to the right, Container B opens to the left
+system.registerContainer('a', canvasA, 'right');
+system.registerContainer('b', canvasB, 'left');
 
 // Create voroboid configurations
 const numVoroboids = 8;

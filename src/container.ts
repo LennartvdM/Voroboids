@@ -1,7 +1,8 @@
-// Container - holds voroboids in voronoi layout
+// Container - holds voroboids in voronoi layout with one open side
 
 import { Delaunay } from 'd3-delaunay';
-import type { Vec2, ContainerBounds, BezierPath, FlockConfig } from './types';
+import type { Vec2, ContainerBounds, BezierPath, FlockConfig, OpeningSide } from './types';
+import { getOpeningEdge, getOpeningDirection } from './types';
 import { Voroboid } from './voroboid';
 import { vec2, gaussianRandom } from './math';
 
@@ -11,13 +12,17 @@ export class Container {
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
 
+  // Which side is open (the "pour spout")
+  opening: OpeningSide;
+
   // Absolute position for cross-container calculations
   absoluteX: number;
   absoluteY: number;
 
-  constructor(canvas: HTMLCanvasElement, absoluteX: number = 0, absoluteY: number = 0) {
+  constructor(canvas: HTMLCanvasElement, opening: OpeningSide, absoluteX: number = 0, absoluteY: number = 0) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
+    this.opening = opening;
     this.absoluteX = absoluteX;
     this.absoluteY = absoluteY;
     this.bounds = {
@@ -39,7 +44,6 @@ export class Container {
     if (this.voroboids.length === 0) return;
 
     // Generate weighted points for voronoi
-    // Use Lloyd relaxation for better distribution
     const points = this.generateWeightedPoints();
 
     // Compute Delaunay triangulation then Voronoi
@@ -62,7 +66,7 @@ export class Container {
     }
   }
 
-  // Generate initial points with some weight influence
+  // Generate initial points with Lloyd relaxation
   private generateWeightedPoints(): [number, number][] {
     const points: [number, number][] = [];
     const padding = 20;
@@ -111,7 +115,6 @@ export class Container {
 
     area /= 2;
     if (Math.abs(area) < 0.0001) {
-      // Fallback to simple average for degenerate polygons
       const avgX = polygon.reduce((sum, p) => sum + p.x, 0) / polygon.length;
       const avgY = polygon.reduce((sum, p) => sum + p.y, 0) / polygon.length;
       return vec2(avgX, avgY);
@@ -123,91 +126,135 @@ export class Container {
     return vec2(cx, cy);
   }
 
+  // Get the opening edge in absolute coordinates
+  getAbsoluteOpeningEdge(): { start: Vec2; end: Vec2 } {
+    const localEdge = getOpeningEdge(this.bounds, this.opening);
+    return {
+      start: { x: this.absoluteX + localEdge.start.x, y: this.absoluteY + localEdge.start.y },
+      end: { x: this.absoluteX + localEdge.end.x, y: this.absoluteY + localEdge.end.y },
+    };
+  }
+
   // Prepare migration to another container
-  prepareMigration(
-    targetContainer: Container,
-    config: FlockConfig
-  ): void {
-    // Calculate migration path direction
-    const sourceCenter = vec2(
-      this.absoluteX + this.bounds.width / 2,
-      this.absoluteY + this.bounds.height / 2
-    );
-    const targetCenter = vec2(
-      targetContainer.absoluteX + targetContainer.bounds.width / 2,
-      targetContainer.absoluteY + targetContainer.bounds.height / 2
-    );
+  prepareMigration(targetContainer: Container, config: FlockConfig): void {
+    // Get opening edges
+    const sourceEdge = this.getAbsoluteOpeningEdge();
+    const targetEdge = targetContainer.getAbsoluteOpeningEdge();
+
+    // Get opening directions (outward normals)
+    const sourceDir = getOpeningDirection(this.opening);
+    const targetDir = getOpeningDirection(targetContainer.opening);
 
     // Compute target voronoi layout
     targetContainer.voroboids = this.voroboids;
     targetContainer.computeVoronoi();
 
-    // Set up each voroboid for migration
-    for (let i = 0; i < this.voroboids.length; i++) {
-      const voroboid = this.voroboids[i];
+    // Sort voroboids by their position along the opening edge
+    // This creates natural lanes
+    const sortedVoroboids = [...this.voroboids].sort((a, b) => {
+      if (this.opening === 'left' || this.opening === 'right') {
+        return a.position.y - b.position.y; // Sort by Y for vertical openings
+      } else {
+        return a.position.x - b.position.x; // Sort by X for horizontal openings
+      }
+    });
 
-      // Staggered launch delay (normal distribution)
-      const delay = Math.max(0, gaussianRandom(config.staggerMean, config.staggerStdDev));
+    // Assign each voroboid a "lane" position (0-1) along the opening
+    const numVoroboids = sortedVoroboids.length;
 
-      // Create teh tarik bezier path
+    for (let i = 0; i < numVoroboids; i++) {
+      const voroboid = sortedVoroboids[i];
+
+      // Lane position (0 to 1) with padding from edges
+      const laneT = (i + 0.5) / numVoroboids;
+
+      // Calculate exit point along source opening
+      const exitPoint: Vec2 = {
+        x: sourceEdge.start.x + (sourceEdge.end.x - sourceEdge.start.x) * laneT,
+        y: sourceEdge.start.y + (sourceEdge.end.y - sourceEdge.start.y) * laneT,
+      };
+
+      // Calculate entry point along target opening
+      const entryPoint: Vec2 = {
+        x: targetEdge.start.x + (targetEdge.end.x - targetEdge.start.x) * laneT,
+        y: targetEdge.start.y + (targetEdge.end.y - targetEdge.start.y) * laneT,
+      };
+
+      // Create bezier path from voroboid's current position through exit to entry
       const startPos = vec2(
         this.absoluteX + voroboid.position.x,
         this.absoluteY + voroboid.position.y
       );
-      const endPos = vec2(
-        targetContainer.absoluteX + voroboid.targetCenter.x,
-        targetContainer.absoluteY + voroboid.targetCenter.y
-      );
 
-      const path = this.createTehTarikPath(startPos, endPos, sourceCenter, targetCenter);
+      const path = this.createFlowPath(startPos, exitPoint, entryPoint, sourceDir, targetDir);
 
-      // Flight duration with some variance
-      const duration = 1200 + Math.random() * 600;
+      // Staggered launch delay based on distance from opening
+      // Voroboids closer to the opening leave first
+      const distanceToOpening = this.getDistanceToOpening(voroboid.position);
+      const maxDist = Math.max(this.bounds.width, this.bounds.height);
+      const normalizedDist = distanceToOpening / maxDist;
+
+      // Base delay + distance-based stagger + small random variance
+      const delay = normalizedDist * config.staggerMean + gaussianRandom(0, config.staggerStdDev * 0.3);
+
+      // Flight duration with slight variance per lane
+      const duration = 800 + Math.random() * 400;
 
       // Store target cell info
       voroboid.setTargetCell(voroboid.cellPolygon, voroboid.cellCenter);
 
       // Prepare for launch
-      voroboid.prepareLaunch(delay, path, duration);
+      voroboid.prepareLaunch(Math.max(0, delay), path, duration);
     }
 
-    // Clear from this container (they're now in flight)
+    // Clear from this container
     this.voroboids = [];
   }
 
-  // Create a teh tarik style arc path
-  private createTehTarikPath(
+  // Get distance from a point to the opening edge
+  private getDistanceToOpening(pos: Vec2): number {
+    switch (this.opening) {
+      case 'top': return pos.y;
+      case 'bottom': return this.bounds.height - pos.y;
+      case 'left': return pos.x;
+      case 'right': return this.bounds.width - pos.x;
+    }
+  }
+
+  // Create a flow path that respects the openings
+  private createFlowPath(
     start: Vec2,
-    end: Vec2,
-    _sourceCenter: Vec2,
-    _targetCenter: Vec2
+    exitPoint: Vec2,
+    entryPoint: Vec2,
+    sourceDir: Vec2,
+    targetDir: Vec2
   ): BezierPath {
-    // Calculate the arc
-    const dx = end.x - start.x;
-    const dy = end.y - start.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
+    // Distance between exit and entry
+    const dx = entryPoint.x - exitPoint.x;
+    const dy = entryPoint.y - exitPoint.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
 
-    // Arc height proportional to distance
-    const arcHeight = dist * 0.6 + Math.random() * dist * 0.2;
+    // Control point distance - creates the arc
+    const arcStrength = distance * 0.4;
 
-    // Perpendicular direction for arc (with some randomness)
-    const perpX = -dy / dist;
-    const perpY = dx / dist;
+    // First control point: extends outward from source opening
+    const ctrl1: Vec2 = {
+      x: exitPoint.x + sourceDir.x * arcStrength,
+      y: exitPoint.y + sourceDir.y * arcStrength,
+    };
 
-    // Control points create the teh tarik arc
-    // First control point: pull up and slightly forward
-    const ctrl1 = vec2(
-      start.x + dx * 0.25 + perpX * arcHeight * (0.8 + Math.random() * 0.4),
-      start.y + dy * 0.25 + perpY * arcHeight * (0.8 + Math.random() * 0.4)
-    );
+    // Second control point: extends outward from target opening (inward from entry direction)
+    const ctrl2: Vec2 = {
+      x: entryPoint.x - targetDir.x * arcStrength,
+      y: entryPoint.y - targetDir.y * arcStrength,
+    };
 
-    // Second control point: high arc, further along
-    const ctrl2 = vec2(
-      start.x + dx * 0.75 + perpX * arcHeight * (0.6 + Math.random() * 0.3),
-      start.y + dy * 0.75 + perpY * arcHeight * (0.6 + Math.random() * 0.3)
-    );
-
-    return { start, control1: ctrl1, control2: ctrl2, end };
+    return {
+      start: start,
+      control1: ctrl1,
+      control2: ctrl2,
+      end: entryPoint,
+    };
   }
 
   // Update all voroboids
@@ -217,7 +264,7 @@ export class Container {
     }
   }
 
-  // Render the container and its voroboids
+  // Render the container with 3 walls (opening is missing)
   render(time: number): void {
     this.ctx.clearRect(0, 0, this.bounds.width, this.bounds.height);
 
@@ -225,10 +272,34 @@ export class Container {
     this.ctx.fillStyle = '#12121a';
     this.ctx.fillRect(0, 0, this.bounds.width, this.bounds.height);
 
-    // Draw container border
-    this.ctx.strokeStyle = '#2a2a3a';
-    this.ctx.lineWidth = 2;
-    this.ctx.strokeRect(1, 1, this.bounds.width - 2, this.bounds.height - 2);
+    // Draw 3 walls (not the opening side)
+    this.ctx.strokeStyle = '#4a4a6a';
+    this.ctx.lineWidth = 3;
+    this.ctx.lineCap = 'round';
+
+    const w = this.bounds.width;
+    const h = this.bounds.height;
+
+    this.ctx.beginPath();
+
+    if (this.opening !== 'top') {
+      this.ctx.moveTo(0, 0);
+      this.ctx.lineTo(w, 0);
+    }
+    if (this.opening !== 'right') {
+      this.ctx.moveTo(w, 0);
+      this.ctx.lineTo(w, h);
+    }
+    if (this.opening !== 'bottom') {
+      this.ctx.moveTo(w, h);
+      this.ctx.lineTo(0, h);
+    }
+    if (this.opening !== 'left') {
+      this.ctx.moveTo(0, h);
+      this.ctx.lineTo(0, 0);
+    }
+
+    this.ctx.stroke();
 
     // Render each voroboid
     for (const voroboid of this.voroboids) {
@@ -238,34 +309,59 @@ export class Container {
 
   private renderVoroboid(voroboid: Voroboid, time: number): void {
     const shape = voroboid.getCurrentShape(time);
+    if (shape.length < 3) return;
 
-    // Debug: draw a red circle at voroboid position to confirm rendering works
-    this.ctx.beginPath();
-    this.ctx.arc(voroboid.position.x, voroboid.position.y, 10, 0, Math.PI * 2);
-    this.ctx.fillStyle = 'red';
-    this.ctx.fill();
-
-    if (shape.length < 3) {
-      return;
-    }
-
-    // Draw the voronoi cell shape
     this.ctx.beginPath();
     this.ctx.moveTo(shape[0].x, shape[0].y);
 
-    for (let i = 1; i < shape.length; i++) {
-      this.ctx.lineTo(shape[i].x, shape[i].y);
+    if (voroboid.morphProgress > 0.5) {
+      // Blob-like: use smooth curves
+      for (let i = 0; i < shape.length; i++) {
+        const next = shape[(i + 1) % shape.length];
+        const nextNext = shape[(i + 2) % shape.length];
+        const cpX = next.x;
+        const cpY = next.y;
+        const endX = (next.x + nextNext.x) / 2;
+        const endY = (next.y + nextNext.y) / 2;
+        this.ctx.quadraticCurveTo(cpX, cpY, endX, endY);
+      }
+    } else {
+      // Voronoi-like: straight edges
+      for (let i = 1; i < shape.length; i++) {
+        this.ctx.lineTo(shape[i].x, shape[i].y);
+      }
     }
     this.ctx.closePath();
 
-    // Simple solid fill for debugging
-    this.ctx.fillStyle = voroboid.color;
+    // Gradient fill
+    const gradient = this.ctx.createRadialGradient(
+      voroboid.position.x, voroboid.position.y, 0,
+      voroboid.position.x, voroboid.position.y, voroboid.blobRadius * 2
+    );
+    gradient.addColorStop(0, voroboid.color);
+    gradient.addColorStop(1, this.darkenColor(voroboid.color, 0.3));
+
+    this.ctx.fillStyle = gradient;
     this.ctx.fill();
 
-    // Stroke to make edges visible
-    this.ctx.strokeStyle = '#ffffff';
-    this.ctx.lineWidth = 2;
+    // Subtle stroke
+    this.ctx.strokeStyle = this.lightenColor(voroboid.color, 0.2);
+    this.ctx.lineWidth = 1;
     this.ctx.stroke();
+  }
+
+  private darkenColor(hex: string, factor: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgb(${Math.floor(r * (1 - factor))}, ${Math.floor(g * (1 - factor))}, ${Math.floor(b * (1 - factor))})`;
+  }
+
+  private lightenColor(hex: string, factor: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgb(${Math.min(255, Math.floor(r + (255 - r) * factor))}, ${Math.min(255, Math.floor(g + (255 - g) * factor))}, ${Math.min(255, Math.floor(b + (255 - b) * factor))})`;
   }
 
   // Check if all voroboids are settled

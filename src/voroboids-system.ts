@@ -1,6 +1,6 @@
 // VoroboidsSystem - main orchestrator for the entire system
 
-import type { VoroboidConfig, FlockConfig } from './types';
+import type { VoroboidConfig, FlockConfig, OpeningSide } from './types';
 import { DEFAULT_FLOCK_CONFIG } from './types';
 import { Voroboid } from './voroboid';
 import { Container } from './container';
@@ -21,10 +21,10 @@ export class VoroboidsSystem {
     this.flightRenderer = new FlightRenderer();
   }
 
-  // Register a container
-  registerContainer(id: string, canvas: HTMLCanvasElement): Container {
+  // Register a container with its opening side
+  registerContainer(id: string, canvas: HTMLCanvasElement, opening: OpeningSide): Container {
     const rect = canvas.getBoundingClientRect();
-    const container = new Container(canvas, rect.left, rect.top);
+    const container = new Container(canvas, opening, rect.left, rect.top);
     this.containers.set(id, container);
     return container;
   }
