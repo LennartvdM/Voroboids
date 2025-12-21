@@ -41,6 +41,7 @@ export class Container {
     // Generate weighted points for voronoi
     // Use Lloyd relaxation for better distribution
     const points = this.generateWeightedPoints();
+    console.log('Computing voronoi with points:', points);
 
     // Compute Delaunay triangulation then Voronoi
     const delaunay = Delaunay.from(points);
@@ -54,10 +55,12 @@ export class Container {
     // Assign cells to voroboids
     for (let i = 0; i < this.voroboids.length; i++) {
       const cellPolygon = voronoi.cellPolygon(i);
+      console.log(`Cell ${i}:`, cellPolygon);
       if (cellPolygon) {
         const polygon: Vec2[] = cellPolygon.map((pt: [number, number]) => vec2(pt[0], pt[1]));
         const center = this.getPolygonCentroid(polygon);
         this.voroboids[i].setCell(polygon, center);
+        console.log(`Voroboid ${i} cell set:`, polygon.length, 'points, center:', center);
       }
     }
   }
@@ -238,7 +241,17 @@ export class Container {
 
   private renderVoroboid(voroboid: Voroboid, time: number): void {
     const shape = voroboid.getCurrentShape(time);
-    if (shape.length < 3) return;
+
+    // Debug: draw a red circle at voroboid position
+    this.ctx.beginPath();
+    this.ctx.arc(voroboid.position.x, voroboid.position.y, 10, 0, Math.PI * 2);
+    this.ctx.fillStyle = 'red';
+    this.ctx.fill();
+
+    if (shape.length < 3) {
+      console.log(`Voroboid ${voroboid.id} has shape with ${shape.length} points`);
+      return;
+    }
 
     this.ctx.beginPath();
     this.ctx.moveTo(shape[0].x, shape[0].y);
