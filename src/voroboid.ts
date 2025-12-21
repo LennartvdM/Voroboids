@@ -1,43 +1,40 @@
-// Individual Voroboid - a cell that can morph between voronoi and blob
+// Voroboid - an autonomous agent that follows local rules
+// Voronoi-like structures EMERGE from equilibrium, not pre-computation
 
-import type { Vec2, VoroboidState, VoroboidConfig, BezierPath, FlockConfig } from './types';
-import { vec2, add, sub, mul, normalize, magnitude, limit, bezierPoint, easeOutCubic, easeOutBack, smoothstep } from './math';
+import type { Vec2, VoroboidConfig, FlockConfig, OpeningSide, ContainerBounds } from './types';
+import { vec2, add, sub, mul, normalize, magnitude, limit } from './math';
+
+export type VoroboidMode = 'settled' | 'migrating';
 
 export class Voroboid {
   id: number;
   color: string;
   weight: number;
 
-  // Position & motion
+  // Physics
   position: Vec2;
   velocity: Vec2;
   acceleration: Vec2;
 
-  // State machine
-  state: VoroboidState = 'contained';
+  // Current mode
+  mode: VoroboidMode = 'settled';
 
-  // Voronoi cell polygon (when contained/settling)
-  cellPolygon: Vec2[] = [];
-  cellCenter: Vec2 = vec2(0, 0);
+  // Container awareness (set by container)
+  containerBounds: ContainerBounds | null = null;
+  containerOpening: OpeningSide | null = null;
 
-  // Flight path
-  flightPath: BezierPath | null = null;
-  flightProgress: number = 0;
-  flightDuration: number = 1500; // ms
+  // Target awareness (set when migrating)
+  targetBounds: ContainerBounds | null = null;
+  targetOpening: OpeningSide | null = null;
+  targetAbsoluteOffset: Vec2 = vec2(0, 0); // Offset from local to absolute coords
 
-  // Animation timing
-  launchDelay: number = 0;
-  stateStartTime: number = 0;
-  morphProgress: number = 0; // 0 = voronoi, 1 = blob
-
-  // Blob appearance
-  blobRadius: number = 20;
+  // For rendering blob shape
+  blobRadius: number = 25;
   wobblePhase: number = Math.random() * Math.PI * 2;
   wobbleSpeed: number = 3 + Math.random() * 2;
 
-  // Target for settling
-  targetCell: Vec2[] = [];
-  targetCenter: Vec2 = vec2(0, 0);
+  // Morph progress for rendering (0 = voronoi-like, 1 = blob)
+  morphProgress: number = 0;
 
   constructor(config: VoroboidConfig) {
     this.id = config.id;
@@ -48,215 +45,155 @@ export class Voroboid {
     this.acceleration = vec2(0, 0);
   }
 
-  // Set cell polygon from voronoi computation
-  setCell(polygon: Vec2[], center: Vec2): void {
-    this.cellPolygon = polygon;
-    this.cellCenter = center;
-    this.position = { ...center };
+  // Set current container context
+  setContainer(bounds: ContainerBounds, opening: OpeningSide): void {
+    this.containerBounds = bounds;
+    this.containerOpening = opening;
   }
 
-  // Prepare for launch with delay and path
-  prepareLaunch(delay: number, path: BezierPath, duration: number): void {
-    this.launchDelay = delay;
-    this.flightPath = path;
-    this.flightDuration = duration;
-    this.flightProgress = 0;
-    this.state = 'launching';
-    this.stateStartTime = performance.now();
+  // Start migration to target container
+  startMigration(targetBounds: ContainerBounds, targetOpening: OpeningSide, absoluteOffset: Vec2): void {
+    this.mode = 'migrating';
+    this.targetBounds = targetBounds;
+    this.targetOpening = targetOpening;
+    this.targetAbsoluteOffset = absoluteOffset;
+    this.morphProgress = 1; // Full blob mode while migrating
   }
 
-  // Set target cell for settling
-  setTargetCell(polygon: Vec2[], center: Vec2): void {
-    this.targetCell = polygon;
-    this.targetCenter = center;
+  // Called when voroboid enters target container
+  arriveAtTarget(): void {
+    this.containerBounds = this.targetBounds;
+    this.containerOpening = this.targetOpening;
+    this.targetBounds = null;
+    this.targetOpening = null;
+    this.mode = 'settled';
   }
 
-  // Apply boid steering force
-  applyForce(force: Vec2): void {
-    this.acceleration = add(this.acceleration, force);
-  }
+  // Main update - apply all forces based on local rules
+  update(deltaTime: number, neighbors: Voroboid[], config: FlockConfig): void {
+    this.acceleration = vec2(0, 0);
 
-  // Update based on current state
-  update(deltaTime: number, currentTime: number, config: FlockConfig, neighbors: Voroboid[]): void {
-    const elapsed = currentTime - this.stateStartTime;
+    // Always apply boid behaviors
+    const separation = this.computeSeparation(neighbors, config);
+    const cohesion = this.computeCohesion(neighbors, config);
+    const alignment = this.computeAlignment(neighbors, config);
 
-    switch (this.state) {
-      case 'contained':
-        // Static in voronoi cell
-        this.morphProgress = 0;
-        break;
+    this.applyForce(mul(separation, config.separationWeight * 2));
+    this.applyForce(mul(cohesion, config.cohesionWeight * 0.5));
+    this.applyForce(mul(alignment, config.alignmentWeight * 0.3));
 
-      case 'launching':
-        // Waiting to launch, morphing to blob
-        if (elapsed >= this.launchDelay) {
-          this.state = 'flying';
-          this.stateStartTime = currentTime;
-          this.morphProgress = 1;
-        } else {
-          // Morph from voronoi to blob while waiting
-          this.morphProgress = smoothstep(0, this.launchDelay * 0.8, elapsed);
-          // Slight wobble anticipation
-          const wobble = Math.sin(elapsed * 0.01) * 2;
-          this.position = add(this.cellCenter, vec2(wobble, wobble * 0.5));
+    if (this.mode === 'settled' && this.containerBounds) {
+      // When settled: strong wall forces, strong damping
+      const wallForce = this.computeWallRepulsion(this.containerBounds, this.containerOpening, 50);
+      this.applyForce(mul(wallForce, 3));
+
+      // Damping to settle into equilibrium
+      this.applyForce(mul(this.velocity, -0.15));
+
+      // Morph toward voronoi shape
+      this.morphProgress = Math.max(0, this.morphProgress - deltaTime * 0.003);
+
+    } else if (this.mode === 'migrating') {
+      // When migrating: navigate through opening, head to target
+
+      if (this.containerBounds && this.containerOpening) {
+        // Still in source container - head toward opening
+        const openingCenter = this.getOpeningCenter(this.containerBounds, this.containerOpening);
+        const toOpening = sub(openingCenter, this.position);
+        const distToOpening = magnitude(toOpening);
+
+        if (distToOpening > 5) {
+          // Attract toward opening
+          const openingAttraction = mul(normalize(toOpening), config.maxSpeed * 0.5);
+          this.applyForce(openingAttraction);
         }
-        break;
 
-      case 'flying':
-        // Follow bezier path with boid behaviors
-        if (this.flightPath) {
-          const pathElapsed = currentTime - this.stateStartTime;
-          this.flightProgress = Math.min(1, pathElapsed / this.flightDuration);
+        // Repel from walls (but not opening)
+        const wallForce = this.computeWallRepulsion(this.containerBounds, this.containerOpening, 30);
+        this.applyForce(mul(wallForce, 2));
 
-          if (this.flightProgress >= 1) {
-            this.state = 'arriving';
-            this.stateStartTime = currentTime;
-          } else {
-            // Base position from bezier curve
-            const eased = easeOutCubic(this.flightProgress);
-            const basePos = bezierPoint(this.flightPath, eased);
-            // Tangent available for future use: bezierTangent(this.flightPath, eased)
-
-            // Apply boid behaviors for organic movement
-            this.applyBoidBehaviors(neighbors, config);
-
-            // Update velocity and position
-            this.velocity = add(this.velocity, this.acceleration);
-            this.velocity = limit(this.velocity, config.maxSpeed);
-
-            // Blend bezier path with boid movement
-            // Early in flight: more bezier, late in flight: more bezier (less boid chaos at endpoints)
-            const boidInfluence = Math.sin(this.flightProgress * Math.PI) * 0.3;
-            this.position = add(
-              mul(basePos, 1 - boidInfluence),
-              mul(add(basePos, this.velocity), boidInfluence)
-            );
-
-            // Reset acceleration
-            this.acceleration = vec2(0, 0);
-          }
+        // Check if we've exited through opening
+        if (this.hasExitedContainer(this.containerBounds, this.containerOpening)) {
+          this.containerBounds = null;
+          this.containerOpening = null;
         }
-        this.morphProgress = 1;
-        break;
+      } else if (this.targetBounds && this.targetOpening) {
+        // In flight - head toward target opening
+        const targetOpeningCenter = this.getOpeningCenter(this.targetBounds, this.targetOpening);
+        // Adjust for absolute positioning
+        const absoluteTarget = add(targetOpeningCenter, this.targetAbsoluteOffset);
+        const toTarget = sub(absoluteTarget, this.position);
+        const distToTarget = magnitude(toTarget);
 
-      case 'arriving':
-        // Quick settle into position
-        const arriveElapsed = currentTime - this.stateStartTime;
-        const arriveDuration = 400;
+        // Strong attraction to target
+        const targetAttraction = mul(normalize(toTarget), config.maxSpeed);
+        this.applyForce(targetAttraction);
 
-        if (arriveElapsed >= arriveDuration) {
-          this.state = 'settling';
-          this.stateStartTime = currentTime;
-        } else {
-          // Move towards target center with easing
-          const t = easeOutBack(arriveElapsed / arriveDuration);
-          this.position = {
-            x: this.position.x + (this.targetCenter.x - this.position.x) * 0.15,
-            y: this.position.y + (this.targetCenter.y - this.position.y) * 0.15,
-          };
-          this.morphProgress = 1 - t * 0.3;
+        // Light damping in flight
+        this.applyForce(mul(this.velocity, -0.02));
+
+        // Check if we've entered target container
+        if (distToTarget < 20) {
+          // Transition position to target container's local coords
+          this.position = sub(this.position, this.targetAbsoluteOffset);
+          this.arriveAtTarget();
         }
-        break;
+      }
 
-      case 'settling':
-        // Morph from blob back to voronoi
-        const settleElapsed = currentTime - this.stateStartTime;
-        const settleDuration = 600;
-
-        this.morphProgress = Math.max(0, 1 - settleElapsed / settleDuration);
-        this.position = {
-          x: this.position.x + (this.targetCenter.x - this.position.x) * 0.2,
-          y: this.position.y + (this.targetCenter.y - this.position.y) * 0.2,
-        };
-
-        if (settleElapsed >= settleDuration) {
-          this.state = 'contained';
-          this.cellPolygon = this.targetCell;
-          this.cellCenter = this.targetCenter;
-          this.position = { ...this.targetCenter };
-        }
-        break;
+      // Stay as blob while migrating
+      this.morphProgress = 1;
     }
 
-    // Update wobble phase
+    // Integrate physics
+    this.velocity = add(this.velocity, this.acceleration);
+    this.velocity = limit(this.velocity, config.maxSpeed);
+    this.position = add(this.position, mul(this.velocity, deltaTime * 0.06));
+
+    // Update wobble
     this.wobblePhase += deltaTime * 0.001 * this.wobbleSpeed;
   }
 
-  // Craig Reynolds boid behaviors
-  private applyBoidBehaviors(neighbors: Voroboid[], config: FlockConfig): void {
-    const separation = this.separate(neighbors, config);
-    const alignment = this.align(neighbors, config);
-    const cohesion = this.cohere(neighbors, config);
-
-    this.applyForce(mul(separation, config.separationWeight));
-    this.applyForce(mul(alignment, config.alignmentWeight));
-    this.applyForce(mul(cohesion, config.cohesionWeight));
+  private applyForce(force: Vec2): void {
+    this.acceleration = add(this.acceleration, force);
   }
 
-  // Separation: steer to avoid crowding neighbors
-  private separate(neighbors: Voroboid[], config: FlockConfig): Vec2 {
-    const desiredSeparation = config.blobRadius * 2.5;
+  // Separation: steer away from nearby neighbors
+  private computeSeparation(neighbors: Voroboid[], config: FlockConfig): Vec2 {
+    const desiredSeparation = this.blobRadius * 2.5;
     let steer = vec2(0, 0);
     let count = 0;
 
     for (const other of neighbors) {
-      if (other.id === this.id || other.state !== 'flying') continue;
-
+      if (other.id === this.id) continue;
       const d = magnitude(sub(this.position, other.position));
       if (d > 0 && d < desiredSeparation) {
         const diff = normalize(sub(this.position, other.position));
-        steer = add(steer, mul(diff, 1 / d));
+        const weighted = mul(diff, 1 / (d * d)); // Inverse square falloff
+        steer = add(steer, weighted);
         count++;
       }
     }
 
     if (count > 0) {
-      steer = div(steer, count);
-      steer = normalize(steer);
-      steer = mul(steer, config.maxSpeed);
-      steer = sub(steer, this.velocity);
-      steer = limit(steer, config.maxForce);
+      steer = mul(steer, 1 / count);
+      if (magnitude(steer) > 0) {
+        steer = mul(normalize(steer), config.maxSpeed);
+        steer = sub(steer, this.velocity);
+        steer = limit(steer, config.maxForce * 2);
+      }
     }
 
     return steer;
   }
 
-  // Alignment: steer towards average heading of neighbors
-  private align(neighbors: Voroboid[], config: FlockConfig): Vec2 {
-    const neighborDist = config.blobRadius * 5;
+  // Cohesion: steer toward center of nearby neighbors
+  private computeCohesion(neighbors: Voroboid[], config: FlockConfig): Vec2 {
+    const neighborDist = this.blobRadius * 6;
     let sum = vec2(0, 0);
     let count = 0;
 
     for (const other of neighbors) {
-      if (other.id === this.id || other.state !== 'flying') continue;
-
-      const d = magnitude(sub(this.position, other.position));
-      if (d > 0 && d < neighborDist) {
-        sum = add(sum, other.velocity);
-        count++;
-      }
-    }
-
-    if (count > 0) {
-      sum = div(sum, count);
-      sum = normalize(sum);
-      sum = mul(sum, config.maxSpeed);
-      let steer = sub(sum, this.velocity);
-      steer = limit(steer, config.maxForce);
-      return steer;
-    }
-
-    return vec2(0, 0);
-  }
-
-  // Cohesion: steer towards average position of neighbors
-  private cohere(neighbors: Voroboid[], config: FlockConfig): Vec2 {
-    const neighborDist = config.blobRadius * 5;
-    let sum = vec2(0, 0);
-    let count = 0;
-
-    for (const other of neighbors) {
-      if (other.id === this.id || other.state !== 'flying') continue;
-
+      if (other.id === this.id) continue;
       const d = magnitude(sub(this.position, other.position));
       if (d > 0 && d < neighborDist) {
         sum = add(sum, other.position);
@@ -265,63 +202,134 @@ export class Voroboid {
     }
 
     if (count > 0) {
-      sum = div(sum, count);
-      return this.seek(sum, config);
+      const center = mul(sum, 1 / count);
+      const desired = sub(center, this.position);
+      if (magnitude(desired) > 0) {
+        const scaled = mul(normalize(desired), config.maxSpeed * 0.5);
+        let steer = sub(scaled, this.velocity);
+        steer = limit(steer, config.maxForce);
+        return steer;
+      }
     }
 
     return vec2(0, 0);
   }
 
-  // Seek: steer towards a target
-  private seek(target: Vec2, config: FlockConfig): Vec2 {
-    const desired = sub(target, this.position);
-    const d = magnitude(desired);
+  // Alignment: steer to match velocity of nearby neighbors
+  private computeAlignment(neighbors: Voroboid[], config: FlockConfig): Vec2 {
+    const neighborDist = this.blobRadius * 5;
+    let sum = vec2(0, 0);
+    let count = 0;
 
-    if (d > 0) {
-      const normalized = normalize(desired);
-      const scaled = mul(normalized, config.maxSpeed);
-      const steer = sub(scaled, this.velocity);
-      return limit(steer, config.maxForce);
+    for (const other of neighbors) {
+      if (other.id === this.id) continue;
+      const d = magnitude(sub(this.position, other.position));
+      if (d > 0 && d < neighborDist) {
+        sum = add(sum, other.velocity);
+        count++;
+      }
+    }
+
+    if (count > 0) {
+      const avgVel = mul(sum, 1 / count);
+      if (magnitude(avgVel) > 0) {
+        const desired = mul(normalize(avgVel), config.maxSpeed);
+        let steer = sub(desired, this.velocity);
+        steer = limit(steer, config.maxForce);
+        return steer;
+      }
     }
 
     return vec2(0, 0);
   }
 
-  // Get current shape for rendering (interpolated between cell and blob)
-  getCurrentShape(time: number): Vec2[] {
-    if (this.morphProgress <= 0) {
-      return this.cellPolygon;
+  // Wall repulsion: push away from solid walls (not opening)
+  private computeWallRepulsion(bounds: ContainerBounds, opening: OpeningSide | null, range: number): Vec2 {
+    let force = vec2(0, 0);
+
+    // Left wall
+    if (opening !== 'left') {
+      const dist = this.position.x - bounds.x;
+      if (dist < range && dist > 0) {
+        const strength = (range - dist) / range;
+        force = add(force, vec2(strength * strength, 0));
+      }
     }
 
-    if (this.morphProgress >= 1) {
-      return this.getBlobShape(time);
+    // Right wall
+    if (opening !== 'right') {
+      const dist = (bounds.x + bounds.width) - this.position.x;
+      if (dist < range && dist > 0) {
+        const strength = (range - dist) / range;
+        force = add(force, vec2(-strength * strength, 0));
+      }
     }
 
-    // Interpolate between voronoi cell and blob
-    const blobShape = this.getBlobShape(time);
-    const cellShape = this.cellPolygon;
+    // Top wall
+    if (opening !== 'top') {
+      const dist = this.position.y - bounds.y;
+      if (dist < range && dist > 0) {
+        const strength = (range - dist) / range;
+        force = add(force, vec2(0, strength * strength));
+      }
+    }
 
-    // Match point counts for interpolation
-    const targetPoints = Math.max(blobShape.length, cellShape.length);
-    const normalizedCell = this.resamplePolygon(cellShape, targetPoints);
-    const normalizedBlob = this.resamplePolygon(blobShape, targetPoints);
+    // Bottom wall
+    if (opening !== 'bottom') {
+      const dist = (bounds.y + bounds.height) - this.position.y;
+      if (dist < range && dist > 0) {
+        const strength = (range - dist) / range;
+        force = add(force, vec2(0, -strength * strength));
+      }
+    }
 
-    return normalizedCell.map((cellPt, i) => ({
-      x: cellPt.x + (normalizedBlob[i].x - cellPt.x) * this.morphProgress,
-      y: cellPt.y + (normalizedBlob[i].y - cellPt.y) * this.morphProgress,
-    }));
+    return force;
+  }
+
+  // Get center of opening edge
+  private getOpeningCenter(bounds: ContainerBounds, opening: OpeningSide): Vec2 {
+    switch (opening) {
+      case 'top': return vec2(bounds.x + bounds.width / 2, bounds.y);
+      case 'bottom': return vec2(bounds.x + bounds.width / 2, bounds.y + bounds.height);
+      case 'left': return vec2(bounds.x, bounds.y + bounds.height / 2);
+      case 'right': return vec2(bounds.x + bounds.width, bounds.y + bounds.height / 2);
+    }
+  }
+
+  // Check if voroboid has exited container through opening
+  private hasExitedContainer(bounds: ContainerBounds, opening: OpeningSide): boolean {
+    switch (opening) {
+      case 'top': return this.position.y < bounds.y - 10;
+      case 'bottom': return this.position.y > bounds.y + bounds.height + 10;
+      case 'left': return this.position.x < bounds.x - 10;
+      case 'right': return this.position.x > bounds.x + bounds.width + 10;
+    }
+  }
+
+  // Get current shape for rendering
+  getCurrentShape(): Vec2[] {
+    // When morphProgress is low, return a more angular shape
+    // When high, return wobbly blob
+    // The actual "voronoi" structure emerges from positions, not from polygon computation
+    return this.getBlobShape();
   }
 
   // Generate wobbly blob shape
-  private getBlobShape(_time: number): Vec2[] {
+  private getBlobShape(): Vec2[] {
     const points: Vec2[] = [];
-    const segments = 24;
+    const segments = 16;
 
     for (let i = 0; i < segments; i++) {
       const angle = (i / segments) * Math.PI * 2;
-      const wobble = Math.sin(angle * 3 + this.wobblePhase) * 0.15 +
-                     Math.sin(angle * 5 + this.wobblePhase * 1.3) * 0.08;
-      const radius = this.blobRadius * (1 + wobble);
+
+      // More wobble when blob mode, less when settled
+      const wobbleAmount = 0.05 + this.morphProgress * 0.15;
+      const wobble = Math.sin(angle * 3 + this.wobblePhase) * wobbleAmount +
+                     Math.sin(angle * 5 + this.wobblePhase * 1.3) * wobbleAmount * 0.5;
+
+      // Radius varies with morph progress - more circular when blob
+      const baseRadius = this.blobRadius * (0.8 + this.morphProgress * 0.2);
+      const radius = baseRadius * (1 + wobble);
 
       points.push({
         x: this.position.x + Math.cos(angle) * radius,
@@ -331,60 +339,4 @@ export class Voroboid {
 
     return points;
   }
-
-  // Resample polygon to have specific number of points
-  private resamplePolygon(polygon: Vec2[], targetCount: number): Vec2[] {
-    if (polygon.length === 0) return [];
-    if (polygon.length === targetCount) return polygon;
-
-    const result: Vec2[] = [];
-    const totalLength = this.getPolygonPerimeter(polygon);
-    const segmentLength = totalLength / targetCount;
-
-    let currentDist = 0;
-    let polyIndex = 0;
-
-    for (let i = 0; i < targetCount; i++) {
-      const targetDist = i * segmentLength;
-
-      while (currentDist < targetDist && polyIndex < polygon.length) {
-        const p1 = polygon[polyIndex];
-        const p2 = polygon[(polyIndex + 1) % polygon.length];
-        const edgeLength = magnitude(sub(p2, p1));
-
-        if (currentDist + edgeLength >= targetDist) {
-          const t = (targetDist - currentDist) / edgeLength;
-          result.push({
-            x: p1.x + (p2.x - p1.x) * t,
-            y: p1.y + (p2.y - p1.y) * t,
-          });
-          break;
-        }
-
-        currentDist += edgeLength;
-        polyIndex++;
-      }
-
-      if (result.length <= i) {
-        result.push(polygon[i % polygon.length]);
-      }
-    }
-
-    return result;
-  }
-
-  private getPolygonPerimeter(polygon: Vec2[]): number {
-    let perimeter = 0;
-    for (let i = 0; i < polygon.length; i++) {
-      const p1 = polygon[i];
-      const p2 = polygon[(i + 1) % polygon.length];
-      perimeter += magnitude(sub(p2, p1));
-    }
-    return perimeter;
-  }
-}
-
-// Helper needed in boid behaviors
-function div(v: Vec2, scalar: number): Vec2 {
-  return scalar !== 0 ? { x: v.x / scalar, y: v.y / scalar } : { x: 0, y: 0 };
 }
