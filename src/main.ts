@@ -30,12 +30,10 @@ const voroboidConfigs: VoroboidConfig[] = colors.map((color, i) => ({
 }));
 
 // Initialize voroboids in container A
-console.log('Initializing with configs:', voroboidConfigs);
 system.initializeVoroboids('a', voroboidConfigs);
 
 // Start the animation loop
 system.start();
-console.log('Animation started');
 
 // Set up controls
 const migrateRightBtn = document.getElementById('migrate-right') as HTMLButtonElement;

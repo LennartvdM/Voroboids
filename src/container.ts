@@ -41,7 +41,6 @@ export class Container {
     // Generate weighted points for voronoi
     // Use Lloyd relaxation for better distribution
     const points = this.generateWeightedPoints();
-    console.log('Computing voronoi with points:', points);
 
     // Compute Delaunay triangulation then Voronoi
     const delaunay = Delaunay.from(points);
@@ -55,12 +54,10 @@ export class Container {
     // Assign cells to voroboids
     for (let i = 0; i < this.voroboids.length; i++) {
       const cellPolygon = voronoi.cellPolygon(i);
-      console.log(`Cell ${i}:`, cellPolygon);
       if (cellPolygon) {
         const polygon: Vec2[] = cellPolygon.map((pt: [number, number]) => vec2(pt[0], pt[1]));
         const center = this.getPolygonCentroid(polygon);
         this.voroboids[i].setCell(polygon, center);
-        console.log(`Voroboid ${i} cell set:`, polygon.length, 'points, center:', center);
       }
     }
   }
@@ -242,81 +239,33 @@ export class Container {
   private renderVoroboid(voroboid: Voroboid, time: number): void {
     const shape = voroboid.getCurrentShape(time);
 
-    // Debug: draw a red circle at voroboid position
+    // Debug: draw a red circle at voroboid position to confirm rendering works
     this.ctx.beginPath();
     this.ctx.arc(voroboid.position.x, voroboid.position.y, 10, 0, Math.PI * 2);
     this.ctx.fillStyle = 'red';
     this.ctx.fill();
 
     if (shape.length < 3) {
-      console.log(`Voroboid ${voroboid.id} has shape with ${shape.length} points`);
       return;
     }
 
+    // Draw the voronoi cell shape
     this.ctx.beginPath();
     this.ctx.moveTo(shape[0].x, shape[0].y);
 
-    if (voroboid.morphProgress > 0.5) {
-      // Blob-like: use smooth curves
-      for (let i = 0; i < shape.length; i++) {
-        const next = shape[(i + 1) % shape.length];
-        const nextNext = shape[(i + 2) % shape.length];
-
-        const cpX = next.x;
-        const cpY = next.y;
-        const endX = (next.x + nextNext.x) / 2;
-        const endY = (next.y + nextNext.y) / 2;
-
-        this.ctx.quadraticCurveTo(cpX, cpY, endX, endY);
-      }
-    } else {
-      // Voronoi-like: use straight edges with subtle rounding
-      for (let i = 1; i < shape.length; i++) {
-        this.ctx.lineTo(shape[i].x, shape[i].y);
-      }
+    for (let i = 1; i < shape.length; i++) {
+      this.ctx.lineTo(shape[i].x, shape[i].y);
     }
-
     this.ctx.closePath();
 
-    // Fill with gradient
-    const gradient = this.ctx.createRadialGradient(
-      voroboid.position.x, voroboid.position.y, 0,
-      voroboid.position.x, voroboid.position.y, voroboid.blobRadius * 2
-    );
-    gradient.addColorStop(0, voroboid.color);
-    gradient.addColorStop(1, this.darkenColor(voroboid.color, 0.3));
-
-    this.ctx.fillStyle = gradient;
+    // Simple solid fill for debugging
+    this.ctx.fillStyle = voroboid.color;
     this.ctx.fill();
 
-    // Subtle stroke
-    this.ctx.strokeStyle = this.lightenColor(voroboid.color, 0.2);
-    this.ctx.lineWidth = 1;
+    // Stroke to make edges visible
+    this.ctx.strokeStyle = '#ffffff';
+    this.ctx.lineWidth = 2;
     this.ctx.stroke();
-
-    // Add subtle glow for blobs in flight
-    if (voroboid.state === 'flying') {
-      this.ctx.shadowColor = voroboid.color;
-      this.ctx.shadowBlur = 15;
-      this.ctx.fill();
-      this.ctx.shadowBlur = 0;
-    }
-  }
-
-  private darkenColor(hex: string, factor: number): string {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-
-    return `rgb(${Math.floor(r * (1 - factor))}, ${Math.floor(g * (1 - factor))}, ${Math.floor(b * (1 - factor))})`;
-  }
-
-  private lightenColor(hex: string, factor: number): string {
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-
-    return `rgb(${Math.min(255, Math.floor(r + (255 - r) * factor))}, ${Math.min(255, Math.floor(g + (255 - g) * factor))}, ${Math.min(255, Math.floor(b + (255 - b) * factor))})`;
   }
 
   // Check if all voroboids are settled
