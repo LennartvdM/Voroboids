@@ -5,7 +5,7 @@ import type { Vec2, VoroboidConfig, FlockConfig, Wall, MagnetConfig } from './ty
 import { DEFAULT_FLOCK_CONFIG } from './types';
 import { Voroboid, TargetContainerInfo } from './voroboid';
 import { Container, OpeningSide } from './container';
-import { vec2, sub, magnitude, insetPolygon } from './math';
+import { vec2, add, sub, mul, magnitude, normalize, insetPolygon } from './math';
 
 export class VoroboidsSystem {
   private containers: Map<string, Container> = new Map();
@@ -85,10 +85,14 @@ export class VoroboidsSystem {
         bounds.y + padding + Math.random() * (bounds.height - padding * 2)
       );
 
+      // Give initial random velocity - they start moving!
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 2 + Math.random() * 3;
+      voroboid.velocity = vec2(Math.cos(angle) * speed, Math.sin(angle) * speed);
+
       // Set initial target container
       voroboid.targetContainerId = containerId;
       voroboid.isSettled = false;
-      voroboid.departed = false;
 
       this.voroboids.push(voroboid);
     }
@@ -713,8 +717,7 @@ export class VoroboidsSystem {
     this.pourTo(newTarget);
   }
 
-  // Pour all voroboids to a target container
-  // Each voroboid gets a staggered departure delay based on distance
+  // Pour all voroboids to a target container - immediate action!
   pourTo(targetId: string): void {
     const targetContainer = this.containers.get(targetId);
     if (!targetContainer) return;
@@ -725,6 +728,11 @@ export class VoroboidsSystem {
     for (const voroboid of this.voroboids) {
       const dist = magnitude(sub(voroboid.position, opening));
       voroboid.setTargetContainer(targetId, dist);
+
+      // Give a kick toward the opening
+      const toOpening = sub(opening, voroboid.position);
+      const kickDir = magnitude(toOpening) > 1 ? normalize(toOpening) : vec2(0, 0);
+      voroboid.velocity = add(voroboid.velocity, mul(kickDir, 3));
     }
   }
 

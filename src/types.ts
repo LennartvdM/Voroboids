@@ -58,15 +58,28 @@ export interface MagnetConfig {
   direction?: Vec2;      // Optional: directional gravity instead of point
 }
 
-// Physics constants for fluid-like behavior
+// Physics constants - voroboids are bold individuals that fill space
 export const PHYSICS = {
-  AUTOPILOT_STRENGTH: 0.35,   // Steering force toward target opening
-  FLIGHT_DAMPING: 0.96,       // Damping while in flight (between containers)
-  COAST_DAMPING: 0.95,        // Damping while coasting inside container
-  WALL_RANGE: 25,             // Wall avoidance sensing range
-  SETTLE_THRESHOLD: 0.3,      // Velocity below which considered settled
-  MIN_COLLISION_DIST: 50,     // Minimum distance between voroboids
-  ARC_STEERING: 0.1,          // Perpendicular steering for curved paths
+  // Movement - low damping = energetic
+  DAMPING: 0.92,              // Light friction - they keep moving
+  MAX_SPEED: 8,               // Speed limit
+
+  // Repulsion - they push each other away
+  REPULSION_RANGE: 120,       // How far they sense each other
+  REPULSION_STRENGTH: 0.8,    // How hard they push apart
+
+  // Space-filling - they seek empty areas
+  SPREAD_STRENGTH: 0.3,       // Force toward container edges
+
+  // Wall interaction
+  WALL_RANGE: 30,             // Wall sensing range
+  WALL_PUSH: 1.5,             // Wall repulsion strength
+
+  // Navigation
+  SEEK_STRENGTH: 0.5,         // Force toward target when outside
+
+  // Collision
+  MIN_DIST: 40,               // Minimum distance between centers
 };
 
 // Water balloon physics defaults

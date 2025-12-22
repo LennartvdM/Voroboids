@@ -1,5 +1,5 @@
-// Voroboid - an autonomous organism with intent-based movement
-// Key behavior: cells steer toward their target, enter fast, and settle naturally
+// Voroboid - a bold individual particle that fills space
+// Simple rules: repel neighbors, spread out, seek target container
 
 import type { Vec2, Wall, VoroboidConfig, FlockConfig, MagnetConfig, VoroboidContent } from './types';
 import { PHYSICS } from './types';
@@ -37,11 +37,9 @@ export class Voroboid {
   wobblePhase: number = Math.random() * Math.PI * 2;
   wobbleSpeed: number = 3 + Math.random() * 2;
 
-  // Navigation state - voroboids have intent
+  // Navigation state
   targetContainerId: string = 'a';
-  departureDelay: number = 0;      // Frames until departure begins
-  departed: boolean = false;       // Has started moving toward target
-  isSettled: boolean = false;      // Has stopped moving
+  isSettled: boolean = false;      // For UI feedback only
 
   // Polygon tessellation
   polygon: Vec2[] = [];              // Computed boundary vertices
@@ -93,130 +91,110 @@ export class Voroboid {
            pos.y >= bounds.y && pos.y <= bounds.y + bounds.height;
   }
 
-  // Main update - intent-based movement
-  // Inside target: coast with momentum, walls stop movement
-  // Outside target: autopilot steering toward opening
+  // Main update - simple particle physics
+  // 1. Repel from neighbors (spread out!)
+  // 2. If outside target, seek the opening
+  // 3. Stay away from walls
   update(
     _deltaTime: number,
-    _neighbors: Voroboid[],
+    neighbors: Voroboid[],
     walls: Wall[],
-    config: FlockConfig,
+    _config: FlockConfig,
     _magnet?: MagnetConfig,
     targetInfo?: TargetContainerInfo
   ): void {
-    // If no target info, fall back to legacy behavior
-    if (!targetInfo) {
-      this.updateLegacy(_deltaTime, walls, config);
-      return;
-    }
+    let force = vec2(0, 0);
 
-    const isInside = this.insideContainer(this.position, targetInfo.bounds);
+    // FORCE 1: Repulsion from neighbors - spread out!
+    for (const neighbor of neighbors) {
+      if (neighbor.id === this.id) continue;
 
-    // Handle departure delay - wait before starting to move
-    if (!this.departed && !isInside) {
-      this.departureDelay--;
-      if (this.departureDelay > 0) {
-        return; // Still waiting
+      const diff = sub(this.position, neighbor.position);
+      const dist = magnitude(diff);
+
+      if (dist > 0 && dist < PHYSICS.REPULSION_RANGE) {
+        // Inverse square falloff - stronger when close
+        const strength = PHYSICS.REPULSION_STRENGTH * Math.pow(1 - dist / PHYSICS.REPULSION_RANGE, 2);
+        force = add(force, mul(normalize(diff), strength));
       }
-      this.departed = true;
-      this.isSettled = false;
     }
 
-    if (isInside) {
-      // INSIDE TARGET CONTAINER: Coast with momentum
-      // Light damping - momentum carries them to different spots
-      this.velocity = mul(this.velocity, PHYSICS.COAST_DAMPING);
+    // FORCE 2: Seek target container if outside
+    if (targetInfo) {
+      const isInside = this.insideContainer(this.position, targetInfo.bounds);
 
-      // Only walls stop them - hard collision
-      for (const wall of walls) {
-        const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
-        const margin = 20;
-        if (distance < margin && distance > 0) {
-          // Push out of wall
-          const away = normalize(sub(this.position, point));
-          this.position = add(point, mul(away, margin));
-          // Hit wall = stop completely
-          this.velocity = vec2(0, 0);
+      if (!isInside) {
+        // Seek the opening
+        const toOpening = sub(targetInfo.opening, this.position);
+        const dist = magnitude(toOpening);
+        if (dist > 1) {
+          force = add(force, mul(normalize(toOpening), PHYSICS.SEEK_STRENGTH));
+        }
+      } else {
+        // Inside: spread toward edges (fill the container)
+        const bounds = targetInfo.bounds;
+        const centerX = bounds.x + bounds.width / 2;
+        const centerY = bounds.y + bounds.height / 2;
+
+        // Push away from center toward edges
+        const fromCenter = sub(this.position, vec2(centerX, centerY));
+        const distFromCenter = magnitude(fromCenter);
+        if (distFromCenter > 1) {
+          // Gentle outward push
+          force = add(force, mul(normalize(fromCenter), PHYSICS.SPREAD_STRENGTH * 0.5));
         }
       }
-
-      // Check if settled
-      if (magnitude(this.velocity) < PHYSICS.SETTLE_THRESHOLD) {
-        this.isSettled = true;
-      }
-
-      // Reset departure state when inside
-      this.departed = false;
-
-    } else {
-      // OUTSIDE TARGET: Autopilot steering toward opening
-      const toOpening = sub(targetInfo.opening, this.position);
-      const dist = magnitude(toOpening);
-      let steer = vec2(0, 0);
-
-      if (dist > 1) {
-        // Desired velocity toward opening
-        const desired = mul(normalize(toOpening), config.maxSpeed);
-        const steerForce = sub(desired, this.velocity);
-        steer = add(steer, mul(normalize(steerForce), PHYSICS.AUTOPILOT_STRENGTH));
-      }
-
-      // Arc steering for curved, natural paths (based on odd/even id)
-      if (dist > 50) {
-        const perp = vec2(-toOpening.y, toOpening.x);
-        const arcSign = (this.id % 2 === 0) ? 1 : -1;
-        steer = add(steer, mul(normalize(perp), arcSign * PHYSICS.ARC_STEERING));
-      }
-
-      // Wall avoidance during flight (no cell collision)
-      for (const wall of walls) {
-        const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
-        if (distance < PHYSICS.WALL_RANGE && distance > 0) {
-          const away = normalize(sub(this.position, point));
-          const strength = Math.pow((PHYSICS.WALL_RANGE - distance) / PHYSICS.WALL_RANGE, 2) * 0.8;
-          steer = add(steer, mul(away, strength));
-        }
-      }
-
-      // Apply steering with flight damping
-      this.velocity = mul(add(this.velocity, steer), PHYSICS.FLIGHT_DAMPING);
     }
 
-    // Integrate position
+    // FORCE 3: Wall avoidance
+    for (const wall of walls) {
+      const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
+      if (distance > 0 && distance < PHYSICS.WALL_RANGE) {
+        const away = normalize(sub(this.position, point));
+        const strength = PHYSICS.WALL_PUSH * Math.pow(1 - distance / PHYSICS.WALL_RANGE, 2);
+        force = add(force, mul(away, strength));
+
+        // Hard boundary - don't go through walls
+        if (distance < 15) {
+          this.position = add(point, mul(away, 15));
+          // Bounce off wall
+          const wallVec = sub(wall.end, wall.start);
+          const wallNorm = normalize(vec2(-wallVec.y, wallVec.x));
+          const velDot = dot(this.velocity, wallNorm);
+          if (velDot < 0) {
+            this.velocity = sub(this.velocity, mul(wallNorm, velDot * 1.5));
+          }
+        }
+      }
+    }
+
+    // Apply force and damping
+    this.velocity = add(this.velocity, force);
+    this.velocity = mul(this.velocity, PHYSICS.DAMPING);
+
+    // Speed limit
+    const speed = magnitude(this.velocity);
+    if (speed > PHYSICS.MAX_SPEED) {
+      this.velocity = mul(normalize(this.velocity), PHYSICS.MAX_SPEED);
+    }
+
+    // Move
     this.position = add(this.position, this.velocity);
 
-    // Update wobble (for fallback rendering)
+    // Settled check (for UI feedback)
+    this.isSettled = speed < 0.5;
+
+    // Update wobble
     this.wobblePhase += _deltaTime * 0.001 * this.wobbleSpeed;
   }
 
-  // Legacy update for backwards compatibility (when no target info provided)
-  private updateLegacy(deltaTime: number, walls: Wall[], _config: FlockConfig): void {
-    // Simple coast behavior
-    this.velocity = mul(this.velocity, PHYSICS.COAST_DAMPING);
-
-    // Wall constraints
-    for (const wall of walls) {
-      const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
-      const margin = 20;
-      if (distance < margin && distance > 0) {
-        const away = normalize(sub(this.position, point));
-        this.position = add(point, mul(away, margin));
-        this.velocity = vec2(0, 0);
-      }
-    }
-
-    this.position = add(this.position, this.velocity);
-    this.wobblePhase += deltaTime * 0.001 * this.wobbleSpeed;
-  }
-
-  // Set target container and initiate departure
-  setTargetContainer(containerId: string, distanceToOpening: number): void {
+  // Set target container - voroboid immediately starts moving
+  setTargetContainer(containerId: string, _distanceToOpening: number): void {
     if (this.targetContainerId !== containerId) {
       this.targetContainerId = containerId;
-      // Departure delay based on distance - creates staggered, natural flow
-      this.departureDelay = Math.floor(distanceToOpening / 8);
-      this.departed = false;
       this.isSettled = false;
+      // Give an initial kick toward the new target
+      // The actual seeking happens in update()
     }
   }
 
@@ -338,10 +316,9 @@ export class Voroboid {
     this.targetArea = Math.PI * this.blobRadius * this.blobRadius * this.weight;
   }
 
-  // Simple collision resolution - just respect each other's space, no bounce
-  // Called after all voroboids have updated their positions
+  // Collision resolution - push apart and add velocity
   static resolveCollisions(voroboids: Voroboid[]): void {
-    const minDist = PHYSICS.MIN_COLLISION_DIST;
+    const minDist = PHYSICS.MIN_DIST;
 
     for (let i = 0; i < voroboids.length; i++) {
       for (let j = i + 1; j < voroboids.length; j++) {
@@ -352,10 +329,18 @@ export class Voroboid {
         const dist = magnitude(diff);
 
         if (dist > 0 && dist < minDist) {
-          // Push apart - each moves half the overlap distance
-          const fix = mul(normalize(diff), (minDist - dist) * 0.5);
+          const overlap = minDist - dist;
+          const pushDir = normalize(diff);
+
+          // Position correction
+          const fix = mul(pushDir, overlap * 0.5);
           a.position = add(a.position, fix);
           b.position = sub(b.position, fix);
+
+          // Add push velocity - they bounce apart
+          const pushVel = mul(pushDir, overlap * 0.15);
+          a.velocity = add(a.velocity, pushVel);
+          b.velocity = sub(b.velocity, pushVel);
         }
       }
     }
