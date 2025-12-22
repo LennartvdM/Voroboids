@@ -1,5 +1,5 @@
-// VoroboidsSystem - unified world containing all voroboids and walls
-// Voroboids exist in world space and interact with all walls/neighbors globally
+// VoroboidsSystem - unified world with global rendering
+// All voroboids exist in world space, rendered on a single canvas
 
 import type { VoroboidConfig, FlockConfig, Wall } from './types';
 import { DEFAULT_FLOCK_CONFIG } from './types';
@@ -12,18 +12,43 @@ export class VoroboidsSystem {
   private voroboids: Voroboid[] = [];
   private config: FlockConfig;
 
+  // World rendering
+  private worldCanvas: HTMLCanvasElement;
+  private worldContainer: HTMLElement;
+  private ctx: CanvasRenderingContext2D;
+
   private lastTime: number = 0;
   private animationId: number | null = null;
 
-  constructor(config: Partial<FlockConfig> = {}) {
+  constructor(
+    worldCanvas: HTMLCanvasElement,
+    worldContainer: HTMLElement,
+    config: Partial<FlockConfig> = {}
+  ) {
+    this.worldCanvas = worldCanvas;
+    this.worldContainer = worldContainer;
+    this.ctx = worldCanvas.getContext('2d')!;
     this.config = { ...DEFAULT_FLOCK_CONFIG, ...config };
+
+    this.updateCanvasSize();
+  }
+
+  // Update canvas to match world container size
+  updateCanvasSize(): void {
+    const rect = this.worldContainer.getBoundingClientRect();
+    // Add bleed zone around the demo area
+    const bleed = 100;
+    this.worldCanvas.width = rect.width + bleed * 2;
+    this.worldCanvas.height = rect.height + bleed * 2;
+    this.worldCanvas.style.left = `-${bleed}px`;
+    this.worldCanvas.style.top = `-${bleed}px`;
   }
 
   // Register a container (region with walls)
-  registerContainer(id: string, canvas: HTMLCanvasElement, opening: OpeningSide): Container {
-    const rect = canvas.getBoundingClientRect();
-    const container = new Container(canvas, opening, rect.left, rect.top);
+  registerContainer(id: string, element: HTMLElement, opening: OpeningSide): Container {
+    const container = new Container(element, opening);
     this.containers.set(id, container);
+    this.updateContainerPositions();
     return container;
   }
 
@@ -37,16 +62,17 @@ export class VoroboidsSystem {
     // Clear existing voroboids
     this.voroboids = [];
 
-    // Create voroboids and position them within the container
+    const bounds = container.getBounds();
     const padding = 40;
+
     for (const cfg of configs) {
       const voroboid = new Voroboid(cfg);
       voroboid.blobRadius = this.config.blobRadius;
 
       // Position in world space within the container
       voroboid.position = vec2(
-        container.worldX + padding + Math.random() * (container.width - padding * 2),
-        container.worldY + padding + Math.random() * (container.height - padding * 2)
+        bounds.x + padding + Math.random() * (bounds.width - padding * 2),
+        bounds.y + padding + Math.random() * (bounds.height - padding * 2)
       );
 
       this.voroboids.push(voroboid);
@@ -88,28 +114,128 @@ export class VoroboidsSystem {
   };
 
   private update(deltaTime: number): void {
-    // Get all walls in the world
     const allWalls = this.getAllWalls();
 
-    // Update each voroboid with global awareness
     for (const voroboid of this.voroboids) {
       voroboid.update(deltaTime, this.voroboids, allWalls, this.config);
     }
   }
 
   private render(): void {
-    // Each container renders voroboids visible in its region
+    const bleed = 100;
+    const width = this.worldCanvas.width;
+    const height = this.worldCanvas.height;
+
+    // Clear canvas
+    this.ctx.clearRect(0, 0, width, height);
+
+    // Offset for bleed zone
+    this.ctx.save();
+    this.ctx.translate(bleed, bleed);
+
+    // Render container backgrounds
     for (const container of this.containers.values()) {
-      container.render(this.voroboids);
+      this.renderContainerBackground(container);
     }
+
+    // Render all voroboids
+    for (const voroboid of this.voroboids) {
+      this.renderVoroboid(voroboid);
+    }
+
+    // Render container walls on top
+    for (const container of this.containers.values()) {
+      this.renderContainerWalls(container);
+    }
+
+    this.ctx.restore();
+  }
+
+  private renderContainerBackground(container: Container): void {
+    this.ctx.fillStyle = '#12121a';
+    this.ctx.beginPath();
+    this.ctx.roundRect(
+      container.worldX,
+      container.worldY,
+      container.width,
+      container.height,
+      8
+    );
+    this.ctx.fill();
+  }
+
+  private renderContainerWalls(container: Container): void {
+    this.ctx.strokeStyle = '#4a4a6a';
+    this.ctx.lineWidth = 3;
+    this.ctx.lineCap = 'round';
+
+    this.ctx.beginPath();
+    for (const wall of container.walls) {
+      this.ctx.moveTo(wall.start.x, wall.start.y);
+      this.ctx.lineTo(wall.end.x, wall.end.y);
+    }
+    this.ctx.stroke();
+  }
+
+  private renderVoroboid(voroboid: Voroboid): void {
+    const shape = voroboid.getCurrentShape();
+    if (shape.length < 3) return;
+
+    this.ctx.beginPath();
+
+    // Smooth blob rendering
+    const first = shape[0];
+    const last = shape[shape.length - 1];
+    this.ctx.moveTo((first.x + last.x) / 2, (first.y + last.y) / 2);
+
+    for (let i = 0; i < shape.length; i++) {
+      const curr = shape[i];
+      const next = shape[(i + 1) % shape.length];
+      const midX = (curr.x + next.x) / 2;
+      const midY = (curr.y + next.y) / 2;
+      this.ctx.quadraticCurveTo(curr.x, curr.y, midX, midY);
+    }
+
+    this.ctx.closePath();
+
+    // Gradient fill
+    const gradient = this.ctx.createRadialGradient(
+      voroboid.position.x, voroboid.position.y, 0,
+      voroboid.position.x, voroboid.position.y, voroboid.blobRadius * 1.5
+    );
+    gradient.addColorStop(0, voroboid.color);
+    gradient.addColorStop(1, this.darkenColor(voroboid.color, 0.3));
+
+    this.ctx.fillStyle = gradient;
+    this.ctx.fill();
+
+    // Subtle stroke
+    this.ctx.strokeStyle = this.lightenColor(voroboid.color, 0.15);
+    this.ctx.lineWidth = 1;
+    this.ctx.stroke();
+  }
+
+  private darkenColor(hex: string, factor: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgb(${Math.floor(r * (1 - factor))}, ${Math.floor(g * (1 - factor))}, ${Math.floor(b * (1 - factor))})`;
+  }
+
+  private lightenColor(hex: string, factor: number): string {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    return `rgb(${Math.min(255, Math.floor(r + (255 - r) * factor))}, ${Math.min(255, Math.floor(g + (255 - g) * factor))}, ${Math.min(255, Math.floor(b + (255 - b) * factor))})`;
   }
 
   // Update container positions (call on resize/scroll)
   updateContainerPositions(): void {
+    const worldRect = this.worldContainer.getBoundingClientRect();
     for (const container of this.containers.values()) {
-      const rect = container.canvas.getBoundingClientRect();
-      container.setWorldPosition(rect.left, rect.top);
+      container.updatePosition(worldRect);
     }
+    this.updateCanvasSize();
   }
 
   // Rotate a container's opening
@@ -120,7 +246,7 @@ export class VoroboidsSystem {
     }
   }
 
-  // Get voroboids (for external access if needed)
+  // Get voroboids
   getVoroboids(): Voroboid[] {
     return this.voroboids;
   }
