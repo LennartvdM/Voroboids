@@ -29,10 +29,20 @@
         text-transform: uppercase;
         color: #888;
       }
+      .world-container {
+        position: relative;
+      }
+      #world-canvas {
+        position: absolute;
+        top: 0;
+        left: 0;
+        pointer-events: none;
+      }
       .demo-area {
         display: flex;
-        gap: 0;
+        gap: 100px;
         align-items: center;
+        position: relative;
       }
       .container-wrapper {
         display: flex;
@@ -50,8 +60,11 @@
         padding: 8px 16px;
         font-size: 0.75rem;
       }
-      canvas {
+      .container-box {
+        width: 300px;
+        height: 400px;
         border-radius: 8px;
+        /* Invisible - just for layout, rendering happens on world canvas */
       }
       .controls {
         display: flex;
@@ -88,16 +101,19 @@
   </head>
   <body>
     <h1>Voroboids</h1>
-    <div class="demo-area">
-      <div class="container-wrapper">
-        <button id="rotate-a" class="rotate-btn">Rotate A ↻</button>
-        <canvas id="container-a" width="300" height="400"></canvas>
-        <span class="container-label">Container A</span>
-      </div>
-      <div class="container-wrapper">
-        <button id="rotate-b" class="rotate-btn">Rotate B ↻</button>
-        <canvas id="container-b" width="300" height="400"></canvas>
-        <span class="container-label">Container B</span>
+    <div class="world-container">
+      <canvas id="world-canvas"></canvas>
+      <div class="demo-area">
+        <div class="container-wrapper">
+          <button id="rotate-a" class="rotate-btn">Rotate A ↻</button>
+          <div id="container-a" class="container-box"></div>
+          <span class="container-label">Container A</span>
+        </div>
+        <div class="container-wrapper">
+          <button id="rotate-b" class="rotate-btn">Rotate B ↻</button>
+          <div id="container-b" class="container-box"></div>
+          <span class="container-label">Container B</span>
+        </div>
       </div>
     </div>
     <div class="controls">

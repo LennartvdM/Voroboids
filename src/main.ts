@@ -4,8 +4,12 @@
 import { VoroboidsSystem, generateColors } from './voroboids-system';
 import type { VoroboidConfig } from './types';
 
-// Initialize the system
-const system = new VoroboidsSystem({
+// Get world elements
+const worldCanvas = document.getElementById('world-canvas') as HTMLCanvasElement;
+const worldContainer = document.querySelector('.demo-area') as HTMLElement;
+
+// Initialize the system with world canvas
+const system = new VoroboidsSystem(worldCanvas, worldContainer, {
   maxSpeed: 6,
   blobRadius: 25,
   wallRepulsionRange: 50,
@@ -16,14 +20,13 @@ const system = new VoroboidsSystem({
   alignmentWeight: 0.5,
 });
 
-// Get canvas elements
-const canvasA = document.getElementById('container-a') as HTMLCanvasElement;
-const canvasB = document.getElementById('container-b') as HTMLCanvasElement;
+// Get container elements (divs, not canvases)
+const containerA = document.getElementById('container-a') as HTMLElement;
+const containerB = document.getElementById('container-b') as HTMLElement;
 
 // Register containers - their openings face each other
-// Container A opens to the right, Container B opens to the left
-system.registerContainer('a', canvasA, 'right');
-system.registerContainer('b', canvasB, 'left');
+system.registerContainer('a', containerA, 'right');
+system.registerContainer('b', containerB, 'left');
 
 // Create voroboid configurations
 const numVoroboids = 8;
@@ -63,9 +66,4 @@ window.addEventListener('resize', () => {
   system.updateContainerPositions();
 });
 
-// Update positions on scroll
-window.addEventListener('scroll', () => {
-  system.updateContainerPositions();
-});
-
-console.log('Voroboids initialized. They will flow naturally through openings!');
+console.log('Voroboids initialized. They flow naturally through openings!');
