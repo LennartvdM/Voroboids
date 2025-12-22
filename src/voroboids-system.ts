@@ -134,48 +134,13 @@ export class VoroboidsSystem {
   }
 
   // Compute Voronoi-like polygons for all voroboids
+  // Cells clip against walls and neighbors - no container bounds needed
   private computePolygons(): void {
-    const activeContainer = this.containers.get(this.activeMagnetContainer);
+    const allWalls = this.getAllWalls();
 
     for (const voroboid of this.voroboids) {
-      // Find which container this voroboid is in
-      const currentContainer = this.getContainerForVoroboid(voroboid);
-      if (!currentContainer) continue;
-
-      const currentContainerId = this.getContainerIdFor(currentContainer);
-      const isInActiveContainer = currentContainerId === this.activeMagnetContainer;
-
-      // If voroboid is transitioning to a different container, use unified bounds
-      // This prevents the visual cell from staying "stuck" in the old container
-      // while the centroid moves toward the new container
-      if (!isInActiveContainer && activeContainer) {
-        // Create bounds that span both the current container and the active container
-        const bounds = this.getUnifiedBounds(currentContainer, activeContainer);
-        voroboid.computePolygon(this.voroboids, bounds);
-      } else {
-        // Voroboid is in its target container, use normal bounds
-        const bounds = currentContainer.getBounds();
-        voroboid.computePolygon(this.voroboids, bounds);
-      }
+      voroboid.computePolygon(this.voroboids, allWalls);
     }
-  }
-
-  // Get unified bounds that span two containers (for smooth transitions)
-  private getUnifiedBounds(containerA: Container, containerB: Container): { x: number; y: number; width: number; height: number } {
-    const boundsA = containerA.getBounds();
-    const boundsB = containerB.getBounds();
-
-    const minX = Math.min(boundsA.x, boundsB.x);
-    const minY = Math.min(boundsA.y, boundsB.y);
-    const maxX = Math.max(boundsA.x + boundsA.width, boundsB.x + boundsB.width);
-    const maxY = Math.max(boundsA.y + boundsA.height, boundsB.y + boundsB.height);
-
-    return {
-      x: minX,
-      y: minY,
-      width: maxX - minX,
-      height: maxY - minY,
-    };
   }
 
   // Find which container a voroboid is in
