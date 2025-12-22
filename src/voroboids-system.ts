@@ -20,8 +20,9 @@ export class VoroboidsSystem {
   private lastTime: number = 0;
   private animationId: number | null = null;
 
-  // Magnet shift state - when true, voroboids are attracted to the other container's magnet
-  private magnetsShifted: boolean = false;
+  // Active magnet container - which bucket's magnet is currently "on"
+  // Both buckets have magnets, but only one is active at a time
+  private activeMagnetContainer: string = 'a';
 
   // Debug visualization
   debug: boolean = true;
@@ -172,49 +173,11 @@ export class VoroboidsSystem {
     return nearestContainer;
   }
 
-  // Find the container a voroboid is in and return the appropriate magnet
-  // When magnetsShifted is true, return the OTHER container's magnet to pull voroboids through
-  private getMagnetForVoroboid(voroboid: Voroboid): MagnetConfig | undefined {
-    // Find current container
-    let currentContainer: Container | undefined;
-    for (const container of this.containers.values()) {
-      if (container.containsPoint(voroboid.position)) {
-        currentContainer = container;
-        break;
-      }
-    }
-
-    // If not in any container, find the nearest one
-    if (!currentContainer) {
-      let minDist = Infinity;
-      for (const container of this.containers.values()) {
-        const bounds = container.getBounds();
-        const centerX = bounds.x + bounds.width / 2;
-        const centerY = bounds.y + bounds.height / 2;
-        const dx = voroboid.position.x - centerX;
-        const dy = voroboid.position.y - centerY;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-
-        if (dist < minDist) {
-          minDist = dist;
-          currentContainer = container;
-        }
-      }
-    }
-
-    if (!currentContainer) return undefined;
-
-    // When magnets are shifted, attract voroboids to the other container
-    if (this.magnetsShifted) {
-      // Find the other container and return its magnet
-      for (const container of this.containers.values()) {
-        if (container !== currentContainer) {
-          return container.getMagnet();
-        }
-      }
-    }
-
-    return currentContainer.getMagnet();
+  // Get the currently active magnet - ALL voroboids are attracted to this magnet
+  // Both buckets have magnets at their bottom, but only one is "on" at a time
+  private getMagnetForVoroboid(_voroboid: Voroboid): MagnetConfig | undefined {
+    const activeContainer = this.containers.get(this.activeMagnetContainer);
+    return activeContainer?.getMagnet();
   }
 
   private render(): void {
@@ -274,16 +237,17 @@ export class VoroboidsSystem {
         this.ctx.font = '11px monospace';
         this.ctx.fillText(`${id}: (${Math.round(bounds.x)},${Math.round(bounds.y)})`, bounds.x + 5, bounds.y + 15);
 
-        // Magnet position - YELLOW circle
+        // Magnet position - YELLOW if active, GRAY if inactive
         const magnet = container.getMagnet();
-        this.ctx.fillStyle = '#ffff00';
+        const isActive = id === this.activeMagnetContainer;
+        this.ctx.fillStyle = isActive ? '#ffff00' : '#666666';
         this.ctx.beginPath();
-        this.ctx.arc(magnet.position.x, magnet.position.y, 8, 0, Math.PI * 2);
+        this.ctx.arc(magnet.position.x, magnet.position.y, isActive ? 10 : 6, 0, Math.PI * 2);
         this.ctx.fill();
-        this.ctx.fillStyle = '#000';
-        this.ctx.font = '10px monospace';
+        this.ctx.fillStyle = isActive ? '#000' : '#999';
+        this.ctx.font = isActive ? 'bold 12px monospace' : '10px monospace';
         this.ctx.textAlign = 'center';
-        this.ctx.fillText('M', magnet.position.x, magnet.position.y + 3);
+        this.ctx.fillText(isActive ? 'ON' : 'M', magnet.position.x, magnet.position.y + 4);
         this.ctx.textAlign = 'left';
       }
     }
@@ -614,15 +578,16 @@ export class VoroboidsSystem {
     }
   }
 
-  // Shift magnets - toggle attraction to the other container
-  // This causes voroboids to flow through the opening to the other side
+  // Swap active magnet - toggle which bucket's magnet is "on"
+  // Both buckets have magnets, this instantly switches which one is active
   shiftMagnets(): void {
-    this.magnetsShifted = !this.magnetsShifted;
+    // Toggle between 'a' and 'b'
+    this.activeMagnetContainer = this.activeMagnetContainer === 'a' ? 'b' : 'a';
   }
 
-  // Check if magnets are currently shifted
-  areMagnetsShifted(): boolean {
-    return this.magnetsShifted;
+  // Get which container's magnet is currently active
+  getActiveMagnetContainer(): string {
+    return this.activeMagnetContainer;
   }
 
   // Get voroboids
