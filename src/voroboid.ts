@@ -1,46 +1,23 @@
-// Voroboid - an autonomous agent that follows local rules
-// Voronoi-like structures EMERGE from equilibrium, not pre-computation
+// Voroboid - an autonomous organism with simple, consistent rules
+// No modes, no phases - just physics that always applies
 
-import type { Vec2, VoroboidConfig, FlockConfig, OpeningSide, ContainerBounds } from './types';
-import { vec2, add, sub, mul, normalize, magnitude, limit } from './math';
-
-export type VoroboidMode = 'settled' | 'migrating';
+import type { Vec2, Wall, VoroboidConfig, FlockConfig } from './types';
+import { vec2, add, sub, mul, normalize, magnitude, limit, pointToSegment } from './math';
 
 export class Voroboid {
   id: number;
   color: string;
   weight: number;
 
-  // Physics
+  // Physics - in world coordinates
   position: Vec2;
   velocity: Vec2;
   acceleration: Vec2;
-
-  // Current mode
-  mode: VoroboidMode = 'settled';
-
-  // Container awareness (set by container)
-  containerBounds: ContainerBounds | null = null;
-  containerOpening: OpeningSide | null = null;
-
-  // Target awareness (set when migrating)
-  targetBounds: ContainerBounds | null = null;
-  targetOpening: OpeningSide | null = null;
-
-  // Coordinate system offsets for migration
-  sourceAbsoluteOffset: Vec2 = vec2(0, 0); // Source container's screen position
-  targetAbsoluteOffset: Vec2 = vec2(0, 0); // Target container's screen position
-
-  // Track if we've exited source and are in flight (using absolute coords)
-  isInFlight: boolean = false;
 
   // For rendering blob shape
   blobRadius: number = 25;
   wobblePhase: number = Math.random() * Math.PI * 2;
   wobbleSpeed: number = 3 + Math.random() * 2;
-
-  // Morph progress for rendering (0 = voronoi-like, 1 = blob)
-  morphProgress: number = 0;
 
   constructor(config: VoroboidConfig) {
     this.id = config.id;
@@ -51,113 +28,26 @@ export class Voroboid {
     this.acceleration = vec2(0, 0);
   }
 
-  // Set current container context
-  setContainer(bounds: ContainerBounds, opening: OpeningSide): void {
-    this.containerBounds = bounds;
-    this.containerOpening = opening;
-  }
-
-  // Start migration to target container
-  startMigration(
-    targetBounds: ContainerBounds,
-    targetOpening: OpeningSide,
-    sourceOffset: Vec2,
-    targetOffset: Vec2
-  ): void {
-    this.mode = 'migrating';
-    this.targetBounds = targetBounds;
-    this.targetOpening = targetOpening;
-    this.sourceAbsoluteOffset = sourceOffset;
-    this.targetAbsoluteOffset = targetOffset;
-    this.isInFlight = false;
-    this.morphProgress = 1; // Full blob mode while migrating
-  }
-
-  // Called when voroboid enters target container
-  arriveAtTarget(): void {
-    this.containerBounds = this.targetBounds;
-    this.containerOpening = this.targetOpening;
-    this.targetBounds = null;
-    this.targetOpening = null;
-    this.isInFlight = false;
-    this.mode = 'settled';
-  }
-
   // Main update - apply all forces based on local rules
-  update(deltaTime: number, neighbors: Voroboid[], config: FlockConfig): void {
+  // The voroboid doesn't know about containers - just walls and neighbors
+  update(deltaTime: number, neighbors: Voroboid[], walls: Wall[], config: FlockConfig): void {
     this.acceleration = vec2(0, 0);
 
-    // Always apply boid behaviors
+    // Boid behaviors - always active
     const separation = this.computeSeparation(neighbors, config);
     const cohesion = this.computeCohesion(neighbors, config);
     const alignment = this.computeAlignment(neighbors, config);
 
-    this.applyForce(mul(separation, config.separationWeight * 2));
-    this.applyForce(mul(cohesion, config.cohesionWeight * 0.5));
-    this.applyForce(mul(alignment, config.alignmentWeight * 0.3));
+    this.applyForce(mul(separation, config.separationWeight));
+    this.applyForce(mul(cohesion, config.cohesionWeight));
+    this.applyForce(mul(alignment, config.alignmentWeight));
 
-    if (this.mode === 'settled' && this.containerBounds) {
-      // When settled: strong wall forces, strong damping
-      const wallForce = this.computeWallRepulsion(this.containerBounds, this.containerOpening, 50);
-      this.applyForce(mul(wallForce, 3));
+    // Wall repulsion - always active for all walls
+    const wallForce = this.computeWallRepulsion(walls, config);
+    this.applyForce(mul(wallForce, config.wallRepulsionStrength));
 
-      // Damping to settle into equilibrium
-      this.applyForce(mul(this.velocity, -0.15));
-
-      // Morph toward voronoi shape
-      this.morphProgress = Math.max(0, this.morphProgress - deltaTime * 0.003);
-
-    } else if (this.mode === 'migrating') {
-      // When migrating: navigate through opening, head to target
-
-      if (!this.isInFlight && this.containerBounds && this.containerOpening) {
-        // Still in source container - head toward a point OUTSIDE the opening
-        const exitTarget = this.getExitTarget(this.containerBounds, this.containerOpening, 60);
-        const toExit = sub(exitTarget, this.position);
-
-        // Always attract toward exit point
-        const exitAttraction = mul(normalize(toExit), config.maxSpeed * 0.8);
-        this.applyForce(exitAttraction);
-
-        // Repel from walls (but not opening)
-        const wallForce = this.computeWallRepulsion(this.containerBounds, this.containerOpening, 30);
-        this.applyForce(mul(wallForce, 2));
-
-        // Check if we've exited through opening
-        if (this.hasExitedContainer(this.containerBounds, this.containerOpening)) {
-          // Convert position: source local -> absolute -> target local
-          const absX = this.position.x + this.sourceAbsoluteOffset.x;
-          const absY = this.position.y + this.sourceAbsoluteOffset.y;
-          this.position = vec2(
-            absX - this.targetAbsoluteOffset.x,
-            absY - this.targetAbsoluteOffset.y
-          );
-
-          this.containerBounds = null;
-          this.containerOpening = null;
-          this.isInFlight = true;
-        }
-      } else if (this.isInFlight && this.targetBounds && this.targetOpening) {
-        // In flight (now using target local coords) - head toward target entry
-        const targetEntry = this.getExitTarget(this.targetBounds, this.targetOpening, 30);
-        const toTarget = sub(targetEntry, this.position);
-
-        // Strong attraction to target entry point
-        const targetAttraction = mul(normalize(toTarget), config.maxSpeed);
-        this.applyForce(targetAttraction);
-
-        // Light damping in flight
-        this.applyForce(mul(this.velocity, -0.02));
-
-        // Check if we've entered target container
-        if (this.isInsideContainer(this.targetBounds)) {
-          this.arriveAtTarget();
-        }
-      }
-
-      // Stay as blob while migrating
-      this.morphProgress = 1;
-    }
+    // Light damping - allows movement but prevents chaos
+    this.applyForce(mul(this.velocity, -config.damping));
 
     // Integrate physics
     this.velocity = add(this.velocity, this.acceleration);
@@ -258,102 +148,40 @@ export class Voroboid {
     return vec2(0, 0);
   }
 
-  // Wall repulsion: push away from solid walls (not opening)
-  private computeWallRepulsion(bounds: ContainerBounds, opening: OpeningSide | null, range: number): Vec2 {
+  // Wall repulsion: push away from all walls
+  // Openings are simply... not walls. No wall = no repulsion = can pass through.
+  private computeWallRepulsion(walls: Wall[], config: FlockConfig): Vec2 {
     let force = vec2(0, 0);
 
-    // Left wall
-    if (opening !== 'left') {
-      const dist = this.position.x - bounds.x;
-      if (dist < range && dist > 0) {
-        const strength = (range - dist) / range;
-        force = add(force, vec2(strength * strength, 0));
-      }
-    }
+    for (const wall of walls) {
+      const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
 
-    // Right wall
-    if (opening !== 'right') {
-      const dist = (bounds.x + bounds.width) - this.position.x;
-      if (dist < range && dist > 0) {
-        const strength = (range - dist) / range;
-        force = add(force, vec2(-strength * strength, 0));
-      }
-    }
-
-    // Top wall
-    if (opening !== 'top') {
-      const dist = this.position.y - bounds.y;
-      if (dist < range && dist > 0) {
-        const strength = (range - dist) / range;
-        force = add(force, vec2(0, strength * strength));
-      }
-    }
-
-    // Bottom wall
-    if (opening !== 'bottom') {
-      const dist = (bounds.y + bounds.height) - this.position.y;
-      if (dist < range && dist > 0) {
-        const strength = (range - dist) / range;
-        force = add(force, vec2(0, -strength * strength));
+      if (distance < config.wallRepulsionRange && distance > 0) {
+        // Direction away from wall
+        const away = normalize(sub(this.position, point));
+        // Strength increases as we get closer (inverse relationship)
+        const strength = (config.wallRepulsionRange - distance) / config.wallRepulsionRange;
+        force = add(force, mul(away, strength * strength));
       }
     }
 
     return force;
   }
 
-  // Get a target point OUTSIDE the container through the opening
-  // This ensures voroboids are attracted past the edge, not just to it
-  private getExitTarget(bounds: ContainerBounds, opening: OpeningSide, distance: number): Vec2 {
-    switch (opening) {
-      case 'top': return vec2(bounds.x + bounds.width / 2, bounds.y - distance);
-      case 'bottom': return vec2(bounds.x + bounds.width / 2, bounds.y + bounds.height + distance);
-      case 'left': return vec2(bounds.x - distance, bounds.y + bounds.height / 2);
-      case 'right': return vec2(bounds.x + bounds.width + distance, bounds.y + bounds.height / 2);
-    }
-  }
-
-  // Check if voroboid has exited container through opening
-  private hasExitedContainer(bounds: ContainerBounds, opening: OpeningSide): boolean {
-    switch (opening) {
-      case 'top': return this.position.y < bounds.y - 10;
-      case 'bottom': return this.position.y > bounds.y + bounds.height + 10;
-      case 'left': return this.position.x < bounds.x - 10;
-      case 'right': return this.position.x > bounds.x + bounds.width + 10;
-    }
-  }
-
-  // Check if voroboid is inside a container
-  private isInsideContainer(bounds: ContainerBounds): boolean {
-    return this.position.x > bounds.x &&
-           this.position.x < bounds.x + bounds.width &&
-           this.position.y > bounds.y &&
-           this.position.y < bounds.y + bounds.height;
-  }
-
-  // Get current shape for rendering
+  // Get current shape for rendering - wobbly blob
   getCurrentShape(): Vec2[] {
-    // When morphProgress is low, return a more angular shape
-    // When high, return wobbly blob
-    // The actual "voronoi" structure emerges from positions, not from polygon computation
-    return this.getBlobShape();
-  }
-
-  // Generate wobbly blob shape
-  private getBlobShape(): Vec2[] {
     const points: Vec2[] = [];
     const segments = 16;
 
     for (let i = 0; i < segments; i++) {
       const angle = (i / segments) * Math.PI * 2;
 
-      // More wobble when blob mode, less when settled
-      const wobbleAmount = 0.05 + this.morphProgress * 0.15;
+      // Procedural wobble
+      const wobbleAmount = 0.15;
       const wobble = Math.sin(angle * 3 + this.wobblePhase) * wobbleAmount +
                      Math.sin(angle * 5 + this.wobblePhase * 1.3) * wobbleAmount * 0.5;
 
-      // Radius varies with morph progress - more circular when blob
-      const baseRadius = this.blobRadius * (0.8 + this.morphProgress * 0.2);
-      const radius = baseRadius * (1 + wobble);
+      const radius = this.blobRadius * (1 + wobble);
 
       points.push({
         x: this.position.x + Math.cos(angle) * radius,

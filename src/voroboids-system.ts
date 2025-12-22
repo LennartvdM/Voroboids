@@ -1,12 +1,15 @@
-// VoroboidsSystem - orchestrator for autonomous voroboid agents
+// VoroboidsSystem - unified world containing all voroboids and walls
+// Voroboids exist in world space and interact with all walls/neighbors globally
 
-import type { VoroboidConfig, FlockConfig, OpeningSide } from './types';
+import type { VoroboidConfig, FlockConfig, Wall } from './types';
 import { DEFAULT_FLOCK_CONFIG } from './types';
 import { Voroboid } from './voroboid';
-import { Container } from './container';
+import { Container, OpeningSide } from './container';
+import { vec2 } from './math';
 
 export class VoroboidsSystem {
   private containers: Map<string, Container> = new Map();
+  private voroboids: Voroboid[] = [];
   private config: FlockConfig;
 
   private lastTime: number = 0;
@@ -16,7 +19,7 @@ export class VoroboidsSystem {
     this.config = { ...DEFAULT_FLOCK_CONFIG, ...config };
   }
 
-  // Register a container with its opening side
+  // Register a container (region with walls)
   registerContainer(id: string, canvas: HTMLCanvasElement, opening: OpeningSide): Container {
     const rect = canvas.getBoundingClientRect();
     const container = new Container(canvas, opening, rect.left, rect.top);
@@ -24,40 +27,39 @@ export class VoroboidsSystem {
     return container;
   }
 
-  // Initialize voroboids in a container
+  // Create voroboids and spawn them in a container region
   initializeVoroboids(containerId: string, configs: VoroboidConfig[]): void {
     const container = this.containers.get(containerId);
     if (!container) {
       throw new Error(`Container ${containerId} not found`);
     }
 
-    const voroboids = configs.map(cfg => new Voroboid(cfg));
-    container.setVoroboids(voroboids);
+    // Clear existing voroboids
+    this.voroboids = [];
+
+    // Create voroboids and position them within the container
+    const padding = 40;
+    for (const cfg of configs) {
+      const voroboid = new Voroboid(cfg);
+      voroboid.blobRadius = this.config.blobRadius;
+
+      // Position in world space within the container
+      voroboid.position = vec2(
+        container.worldX + padding + Math.random() * (container.width - padding * 2),
+        container.worldY + padding + Math.random() * (container.height - padding * 2)
+      );
+
+      this.voroboids.push(voroboid);
+    }
   }
 
-  // Migrate voroboids from one container to another
-  migrate(fromId: string, toId: string): void {
-    const from = this.containers.get(fromId);
-    const to = this.containers.get(toId);
-
-    if (!from || !to) {
-      throw new Error('Container not found');
+  // Collect all walls from all containers
+  private getAllWalls(): Wall[] {
+    const walls: Wall[] = [];
+    for (const container of this.containers.values()) {
+      walls.push(...container.walls);
     }
-
-    if (from.voroboids.length === 0) {
-      return;
-    }
-
-    // Update container positions
-    const fromRect = from.canvas.getBoundingClientRect();
-    const toRect = to.canvas.getBoundingClientRect();
-    from.absoluteX = fromRect.left;
-    from.absoluteY = fromRect.top;
-    to.absoluteX = toRect.left;
-    to.absoluteY = toRect.top;
-
-    // Trigger migration - voroboids will navigate themselves
-    from.startMigration(to);
+    return walls;
   }
 
   // Start animation loop
@@ -76,7 +78,7 @@ export class VoroboidsSystem {
 
   private loop = (): void => {
     const currentTime = performance.now();
-    const deltaTime = Math.min(currentTime - this.lastTime, 32); // Cap at ~30fps min
+    const deltaTime = Math.min(currentTime - this.lastTime, 32);
     this.lastTime = currentTime;
 
     this.update(deltaTime);
@@ -86,14 +88,19 @@ export class VoroboidsSystem {
   };
 
   private update(deltaTime: number): void {
-    for (const container of this.containers.values()) {
-      container.update(deltaTime, this.config);
+    // Get all walls in the world
+    const allWalls = this.getAllWalls();
+
+    // Update each voroboid with global awareness
+    for (const voroboid of this.voroboids) {
+      voroboid.update(deltaTime, this.voroboids, allWalls, this.config);
     }
   }
 
   private render(): void {
+    // Each container renders voroboids visible in its region
     for (const container of this.containers.values()) {
-      container.render();
+      container.render(this.voroboids);
     }
   }
 
@@ -101,17 +108,26 @@ export class VoroboidsSystem {
   updateContainerPositions(): void {
     for (const container of this.containers.values()) {
       const rect = container.canvas.getBoundingClientRect();
-      container.absoluteX = rect.left;
-      container.absoluteY = rect.top;
+      container.setWorldPosition(rect.left, rect.top);
     }
   }
 
-  // Rotate a container's opening (cycles through: right -> bottom -> left -> top)
+  // Rotate a container's opening
   rotateContainer(containerId: string): void {
     const container = this.containers.get(containerId);
     if (container) {
       container.rotateOpening();
     }
+  }
+
+  // Get voroboids (for external access if needed)
+  getVoroboids(): Voroboid[] {
+    return this.voroboids;
+  }
+
+  // Get a container by ID
+  getContainer(id: string): Container | undefined {
+    return this.containers.get(id);
   }
 }
 

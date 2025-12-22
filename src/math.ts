@@ -138,3 +138,30 @@ export function randomInCircle(center: Vec2, radius: number): Vec2 {
 export function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
+
+// Distance from point to line segment, returns closest point and distance
+export function pointToSegment(p: Vec2, a: Vec2, b: Vec2): { point: Vec2; distance: number } {
+  const ab = sub(b, a);
+  const ap = sub(p, a);
+  const lenSq = ab.x * ab.x + ab.y * ab.y;
+
+  if (lenSq === 0) {
+    // Segment is a point
+    return { point: a, distance: magnitude(ap) };
+  }
+
+  // Project p onto line ab, clamping to segment
+  let t = (ap.x * ab.x + ap.y * ab.y) / lenSq;
+  t = clamp(t, 0, 1);
+
+  const closest = vec2(a.x + t * ab.x, a.y + t * ab.y);
+  return { point: closest, distance: magnitude(sub(p, closest)) };
+}
+
+// Get normal vector pointing away from a line segment toward a point
+export function segmentNormalToward(p: Vec2, a: Vec2, b: Vec2): Vec2 {
+  const { point } = pointToSegment(p, a, b);
+  const away = sub(p, point);
+  const mag = magnitude(away);
+  return mag > 0 ? div(away, mag) : vec2(0, 0);
+}

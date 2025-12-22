@@ -1,161 +1,147 @@
-// Container - manages a flock of voroboids
-// No longer computes voronoi - structure emerges from agent behaviors
+// Container - a region in world space with walls and a rendering viewport
+// Containers don't "own" voroboids - they just define walls and render what's visible
 
-import type { ContainerBounds, FlockConfig, OpeningSide } from './types';
+import type { Vec2, Wall } from './types';
 import { Voroboid } from './voroboid';
 import { vec2 } from './math';
 
+export type OpeningSide = 'top' | 'bottom' | 'left' | 'right';
+
 export class Container {
-  bounds: ContainerBounds;
-  voroboids: Voroboid[] = [];
+  // Position in world space
+  worldX: number;
+  worldY: number;
+  width: number;
+  height: number;
+
+  // Rendering
   canvas: HTMLCanvasElement;
   ctx: CanvasRenderingContext2D;
 
-  // Which side is open
+  // Which side is open (no wall)
   opening: OpeningSide;
 
-  // Absolute position for cross-container calculations
-  absoluteX: number;
-  absoluteY: number;
+  // The actual wall segments (3 walls, gap on opening side)
+  walls: Wall[] = [];
 
-  // Target container for ongoing migration
-  private targetContainer: Container | null = null;
-
-  constructor(canvas: HTMLCanvasElement, opening: OpeningSide, absoluteX: number = 0, absoluteY: number = 0) {
+  constructor(
+    canvas: HTMLCanvasElement,
+    opening: OpeningSide,
+    worldX: number,
+    worldY: number
+  ) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d')!;
     this.opening = opening;
-    this.absoluteX = absoluteX;
-    this.absoluteY = absoluteY;
-    this.bounds = {
-      x: 0,
-      y: 0,
-      width: canvas.width,
-      height: canvas.height,
-    };
+    this.worldX = worldX;
+    this.worldY = worldY;
+    this.width = canvas.width;
+    this.height = canvas.height;
+
+    this.rebuildWalls();
   }
 
-  // Add voroboids - scatter them and let them find equilibrium
-  setVoroboids(voroboids: Voroboid[]): void {
-    this.voroboids = voroboids;
+  // Build wall segments based on opening side
+  rebuildWalls(): void {
+    this.walls = [];
+    const x = this.worldX;
+    const y = this.worldY;
+    const w = this.width;
+    const h = this.height;
 
-    // Scatter voroboids randomly within bounds
-    const padding = 40;
-    for (const v of this.voroboids) {
-      v.position = vec2(
-        padding + Math.random() * (this.bounds.width - padding * 2),
-        padding + Math.random() * (this.bounds.height - padding * 2)
-      );
-      v.velocity = vec2(0, 0);
-      v.setContainer(this.bounds, this.opening);
-      v.mode = 'settled';
+    // Add walls for closed sides
+    if (this.opening !== 'top') {
+      this.walls.push({ start: vec2(x, y), end: vec2(x + w, y) });
+    }
+    if (this.opening !== 'right') {
+      this.walls.push({ start: vec2(x + w, y), end: vec2(x + w, y + h) });
+    }
+    if (this.opening !== 'bottom') {
+      this.walls.push({ start: vec2(x + w, y + h), end: vec2(x, y + h) });
+    }
+    if (this.opening !== 'left') {
+      this.walls.push({ start: vec2(x, y + h), end: vec2(x, y) });
     }
   }
 
-  // Trigger migration to another container
-  startMigration(targetContainer: Container): void {
-    // Store source and target offsets for coordinate conversion
-    const sourceOffset = vec2(this.absoluteX, this.absoluteY);
-    const targetOffset = vec2(targetContainer.absoluteX, targetContainer.absoluteY);
-
-    // Tell each voroboid to start migrating
-    for (const v of this.voroboids) {
-      v.startMigration(targetContainer.bounds, targetContainer.opening, sourceOffset, targetOffset);
-    }
-
-    // Store target for transfer during update (don't transfer immediately)
-    this.targetContainer = targetContainer;
+  // Update world position (e.g., after window resize/scroll)
+  setWorldPosition(worldX: number, worldY: number): void {
+    this.worldX = worldX;
+    this.worldY = worldY;
+    this.rebuildWalls();
   }
 
-  // Update all voroboids
-  update(deltaTime: number, config: FlockConfig): void {
-    // All voroboids see all others in the container for boid behaviors
-    for (const voroboid of this.voroboids) {
-      voroboid.update(deltaTime, this.voroboids, config);
-    }
-
-    // Check for voroboids that have exited and should be transferred
-    if (this.targetContainer) {
-      const toTransfer: Voroboid[] = [];
-
-      for (const v of this.voroboids) {
-        // When voroboid enters "in flight" mode, its position has been converted
-        // to target local coords and it should be transferred
-        if (v.isInFlight) {
-          toTransfer.push(v);
-        }
-      }
-
-      // Transfer voroboids to target container
-      for (const v of toTransfer) {
-        this.voroboids = this.voroboids.filter(x => x !== v);
-        this.targetContainer.voroboids.push(v);
-      }
-
-      // Clear target reference once all voroboids have been transferred
-      if (this.voroboids.length === 0) {
-        this.targetContainer = null;
-      }
-    }
+  // Rotate opening: right -> bottom -> left -> top -> right
+  rotateOpening(): void {
+    const sequence: OpeningSide[] = ['right', 'bottom', 'left', 'top'];
+    const currentIndex = sequence.indexOf(this.opening);
+    this.opening = sequence[(currentIndex + 1) % 4];
+    this.rebuildWalls();
   }
 
-  // Render the container with 3 walls
-  render(): void {
-    this.ctx.clearRect(0, 0, this.bounds.width, this.bounds.height);
+  // Render container and any voroboids visible in this region
+  render(voroboids: Voroboid[]): void {
+    this.ctx.clearRect(0, 0, this.width, this.height);
 
     // Draw container background
     this.ctx.fillStyle = '#12121a';
-    this.ctx.fillRect(0, 0, this.bounds.width, this.bounds.height);
+    this.ctx.fillRect(0, 0, this.width, this.height);
 
-    // Draw 3 walls (not the opening side)
+    // Draw walls
     this.ctx.strokeStyle = '#4a4a6a';
     this.ctx.lineWidth = 3;
     this.ctx.lineCap = 'round';
 
-    const w = this.bounds.width;
-    const h = this.bounds.height;
-
     this.ctx.beginPath();
-
-    if (this.opening !== 'top') {
-      this.ctx.moveTo(0, 0);
-      this.ctx.lineTo(w, 0);
+    for (const wall of this.walls) {
+      // Convert world coords to local canvas coords
+      const startLocal = this.worldToLocal(wall.start);
+      const endLocal = this.worldToLocal(wall.end);
+      this.ctx.moveTo(startLocal.x, startLocal.y);
+      this.ctx.lineTo(endLocal.x, endLocal.y);
     }
-    if (this.opening !== 'right') {
-      this.ctx.moveTo(w, 0);
-      this.ctx.lineTo(w, h);
-    }
-    if (this.opening !== 'bottom') {
-      this.ctx.moveTo(w, h);
-      this.ctx.lineTo(0, h);
-    }
-    if (this.opening !== 'left') {
-      this.ctx.moveTo(0, h);
-      this.ctx.lineTo(0, 0);
-    }
-
     this.ctx.stroke();
 
-    // Render each voroboid
-    for (const voroboid of this.voroboids) {
-      this.renderVoroboid(voroboid);
+    // Render voroboids that are visible in this container's viewport
+    for (const voroboid of voroboids) {
+      if (this.isVisible(voroboid)) {
+        this.renderVoroboid(voroboid);
+      }
     }
+  }
+
+  // Check if a voroboid should be rendered in this container
+  private isVisible(voroboid: Voroboid): boolean {
+    const margin = voroboid.blobRadius * 2;
+    return voroboid.position.x > this.worldX - margin &&
+           voroboid.position.x < this.worldX + this.width + margin &&
+           voroboid.position.y > this.worldY - margin &&
+           voroboid.position.y < this.worldY + this.height + margin;
+  }
+
+  // Convert world position to local canvas position
+  private worldToLocal(pos: Vec2): Vec2 {
+    return vec2(pos.x - this.worldX, pos.y - this.worldY);
   }
 
   private renderVoroboid(voroboid: Voroboid): void {
     const shape = voroboid.getCurrentShape();
     if (shape.length < 3) return;
 
+    // Convert shape to local coords
+    const localShape = shape.map(p => this.worldToLocal(p));
+    const localPos = this.worldToLocal(voroboid.position);
+
     this.ctx.beginPath();
 
     // Smooth blob rendering
-    const first = shape[0];
-    const last = shape[shape.length - 1];
+    const first = localShape[0];
+    const last = localShape[localShape.length - 1];
     this.ctx.moveTo((first.x + last.x) / 2, (first.y + last.y) / 2);
 
-    for (let i = 0; i < shape.length; i++) {
-      const curr = shape[i];
-      const next = shape[(i + 1) % shape.length];
+    for (let i = 0; i < localShape.length; i++) {
+      const curr = localShape[i];
+      const next = localShape[(i + 1) % localShape.length];
       const midX = (curr.x + next.x) / 2;
       const midY = (curr.y + next.y) / 2;
       this.ctx.quadraticCurveTo(curr.x, curr.y, midX, midY);
@@ -165,8 +151,8 @@ export class Container {
 
     // Gradient fill
     const gradient = this.ctx.createRadialGradient(
-      voroboid.position.x, voroboid.position.y, 0,
-      voroboid.position.x, voroboid.position.y, voroboid.blobRadius * 1.5
+      localPos.x, localPos.y, 0,
+      localPos.x, localPos.y, voroboid.blobRadius * 1.5
     );
     gradient.addColorStop(0, voroboid.color);
     gradient.addColorStop(1, this.darkenColor(voroboid.color, 0.3));
@@ -191,24 +177,20 @@ export class Container {
     const r = parseInt(hex.slice(1, 3), 16);
     const g = parseInt(hex.slice(3, 5), 16);
     const b = parseInt(hex.slice(5, 7), 16);
-    return `rgb(${Math.min(255, Math.floor(r + (255 - r) * factor))}, ${Math.min(255, Math.floor(g + (255 - g) * factor))}, ${Math.min(255, Math.floor(b + (255 - g) * factor))})`;
+    return `rgb(${Math.min(255, Math.floor(r + (255 - r) * factor))}, ${Math.min(255, Math.floor(g + (255 - g) * factor))}, ${Math.min(255, Math.floor(b + (255 - b) * factor))})`;
   }
 
-  // Rotate opening by 45 degrees (cycles through 8 positions, but only 4 are sides)
-  // For simplicity: right -> bottom -> left -> top -> right
-  rotateOpening(): void {
-    const sequence: OpeningSide[] = ['right', 'bottom', 'left', 'top'];
-    const currentIndex = sequence.indexOf(this.opening);
-    this.opening = sequence[(currentIndex + 1) % 4];
-
-    // Update all voroboids with new container opening
-    for (const v of this.voroboids) {
-      v.setContainer(this.bounds, this.opening);
+  // Get center of opening in world coords (useful for spawning attractors)
+  getOpeningCenter(): Vec2 {
+    switch (this.opening) {
+      case 'top':
+        return vec2(this.worldX + this.width / 2, this.worldY);
+      case 'bottom':
+        return vec2(this.worldX + this.width / 2, this.worldY + this.height);
+      case 'left':
+        return vec2(this.worldX, this.worldY + this.height / 2);
+      case 'right':
+        return vec2(this.worldX + this.width, this.worldY + this.height / 2);
     }
-  }
-
-  // Check if all voroboids are settled
-  isSettled(): boolean {
-    return this.voroboids.every(v => v.mode === 'settled');
   }
 }
