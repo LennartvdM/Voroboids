@@ -165,3 +165,150 @@ export function segmentNormalToward(p: Vec2, a: Vec2, b: Vec2): Vec2 {
   const mag = magnitude(away);
   return mag > 0 ? div(away, mag) : vec2(0, 0);
 }
+
+// =====================
+// Polygon utilities
+// =====================
+
+// Compute the signed area of a polygon (positive = CCW, negative = CW)
+export function polygonArea(polygon: Vec2[]): number {
+  if (polygon.length < 3) return 0;
+
+  let area = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    const j = (i + 1) % polygon.length;
+    area += polygon[i].x * polygon[j].y;
+    area -= polygon[j].x * polygon[i].y;
+  }
+  return area / 2;
+}
+
+// Compute the centroid of a polygon
+export function polygonCentroid(polygon: Vec2[]): Vec2 {
+  if (polygon.length === 0) return vec2(0, 0);
+  if (polygon.length === 1) return polygon[0];
+  if (polygon.length === 2) return lerpVec2(polygon[0], polygon[1], 0.5);
+
+  const area = polygonArea(polygon);
+  if (Math.abs(area) < 0.0001) {
+    // Degenerate polygon, return average of points
+    let cx = 0, cy = 0;
+    for (const p of polygon) {
+      cx += p.x;
+      cy += p.y;
+    }
+    return vec2(cx / polygon.length, cy / polygon.length);
+  }
+
+  let cx = 0, cy = 0;
+  for (let i = 0; i < polygon.length; i++) {
+    const j = (i + 1) % polygon.length;
+    const cross = polygon[i].x * polygon[j].y - polygon[j].x * polygon[i].y;
+    cx += (polygon[i].x + polygon[j].x) * cross;
+    cy += (polygon[i].y + polygon[j].y) * cross;
+  }
+
+  const factor = 1 / (6 * area);
+  return vec2(cx * factor, cy * factor);
+}
+
+// Dot product
+export function dot(a: Vec2, b: Vec2): number {
+  return a.x * b.x + a.y * b.y;
+}
+
+// Clip polygon against a half-plane defined by a point and normal
+// Keeps the half of the polygon on the side the normal points away from
+export function clipPolygonByPlane(polygon: Vec2[], planePoint: Vec2, planeNormal: Vec2): Vec2[] {
+  if (polygon.length < 3) return polygon;
+
+  const result: Vec2[] = [];
+
+  for (let i = 0; i < polygon.length; i++) {
+    const current = polygon[i];
+    const next = polygon[(i + 1) % polygon.length];
+
+    // Distance from plane (positive = on normal side, negative = opposite)
+    const currentDist = dot(sub(current, planePoint), planeNormal);
+    const nextDist = dot(sub(next, planePoint), planeNormal);
+
+    // Current point is inside (on the opposite side of normal)
+    if (currentDist <= 0) {
+      result.push(current);
+    }
+
+    // Edge crosses the plane - add intersection point
+    if ((currentDist > 0 && nextDist < 0) || (currentDist < 0 && nextDist > 0)) {
+      // Compute intersection
+      const t = currentDist / (currentDist - nextDist);
+      const intersection = lerpVec2(current, next, t);
+      result.push(intersection);
+    }
+  }
+
+  return result;
+}
+
+// Create a rectangular polygon from bounds
+export function rectToPolygon(x: number, y: number, width: number, height: number): Vec2[] {
+  return [
+    vec2(x, y),
+    vec2(x + width, y),
+    vec2(x + width, y + height),
+    vec2(x, y + height),
+  ];
+}
+
+// Inset polygon by a fixed distance (shrink toward center)
+export function insetPolygon(polygon: Vec2[], amount: number): Vec2[] {
+  if (polygon.length < 3 || amount === 0) return polygon;
+
+  const result: Vec2[] = [];
+  const n = polygon.length;
+
+  for (let i = 0; i < n; i++) {
+    const prev = polygon[(i - 1 + n) % n];
+    const curr = polygon[i];
+    const next = polygon[(i + 1) % n];
+
+    // Edge vectors
+    const edge1 = normalize(sub(curr, prev));
+    const edge2 = normalize(sub(next, curr));
+
+    // Inward normals (perpendicular, pointing inward assuming CCW winding)
+    const normal1 = vec2(-edge1.y, edge1.x);
+    const normal2 = vec2(-edge2.y, edge2.x);
+
+    // Average normal (bisector direction)
+    const avgNormal = normalize(add(normal1, normal2));
+
+    // Miter length to maintain distance from both edges
+    const dotProduct = dot(avgNormal, normal1);
+    const miterLength = dotProduct !== 0 ? amount / dotProduct : amount;
+
+    // Clamp miter length to avoid spikes
+    const clampedMiter = Math.min(miterLength, amount * 3);
+
+    result.push(add(curr, mul(avgNormal, clampedMiter)));
+  }
+
+  return result;
+}
+
+// Check if a point is inside a polygon (ray casting)
+export function pointInPolygon(point: Vec2, polygon: Vec2[]): boolean {
+  if (polygon.length < 3) return false;
+
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const pi = polygon[i];
+    const pj = polygon[j];
+
+    if (((pi.y > point.y) !== (pj.y > point.y)) &&
+        (point.x < (pj.x - pi.x) * (point.y - pi.y) / (pj.y - pi.y) + pi.x)) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}

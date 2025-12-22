@@ -14,10 +14,11 @@ const system = new VoroboidsSystem(worldCanvas, worldContainer, {
   blobRadius: 25,
   wallRepulsionRange: 50,
   wallRepulsionStrength: 2.0,
-  damping: 0.02,
-  separationWeight: 1.5,
-  cohesionWeight: 0.8,
-  alignmentWeight: 0.5,
+  damping: 0.15,              // Increased for settling (water balloons are heavy)
+  separationWeight: 2.0,       // Stronger separation for collision avoidance
+  cohesionWeight: 0.3,         // Reduced for settling behavior
+  alignmentWeight: 0.2,        // Reduced for settling behavior
+  gravityStrength: 0.8,        // Strong gravity pull toward container bottom
 });
 
 // Get container elements (divs, not canvases)
