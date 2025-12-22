@@ -3,9 +3,9 @@
 
 import type { Vec2, VoroboidConfig, FlockConfig, Wall, MagnetConfig } from './types';
 import { DEFAULT_FLOCK_CONFIG } from './types';
-import { Voroboid } from './voroboid';
+import { Voroboid, TargetContainerInfo } from './voroboid';
 import { Container, OpeningSide } from './container';
-import { vec2, insetPolygon } from './math';
+import { vec2, sub, magnitude, insetPolygon } from './math';
 
 export class VoroboidsSystem {
   private containers: Map<string, Container> = new Map();
@@ -72,6 +72,9 @@ export class VoroboidsSystem {
     const bounds = container.getBounds();
     const padding = 40;
 
+    // Set this container as active and target for all voroboids
+    this.activeMagnetContainer = containerId;
+
     for (const cfg of configs) {
       const voroboid = new Voroboid(cfg);
       voroboid.blobRadius = this.config.blobRadius;
@@ -81,6 +84,11 @@ export class VoroboidsSystem {
         bounds.x + padding + Math.random() * (bounds.width - padding * 2),
         bounds.y + padding + Math.random() * (bounds.height - padding * 2)
       );
+
+      // Set initial target container
+      voroboid.targetContainerId = containerId;
+      voroboid.isSettled = false;
+      voroboid.departed = false;
 
       this.voroboids.push(voroboid);
     }
@@ -124,13 +132,36 @@ export class VoroboidsSystem {
     const allWalls = this.getAllWalls();
 
     for (const voroboid of this.voroboids) {
-      // Find which container this voroboid is in and get its magnet
+      // Get target container info for intent-based navigation
+      const targetInfo = this.getTargetContainerInfo(voroboid);
       const magnet = this.getMagnetForVoroboid(voroboid);
-      voroboid.update(deltaTime, this.voroboids, allWalls, this.config, magnet);
+      voroboid.update(deltaTime, this.voroboids, allWalls, this.config, magnet, targetInfo);
     }
+
+    // Simple collision resolution - voroboids respect each other's space
+    Voroboid.resolveCollisions(this.voroboids);
 
     // Compute polygons for tessellation
     this.computePolygons();
+  }
+
+  // Get target container info for a voroboid's navigation
+  private getTargetContainerInfo(voroboid: Voroboid): TargetContainerInfo | undefined {
+    const targetContainer = this.containers.get(voroboid.targetContainerId);
+    if (!targetContainer) return undefined;
+
+    const bounds = targetContainer.getBounds();
+    const opening = this.getOpeningCenter(targetContainer);
+
+    return {
+      bounds: {
+        x: bounds.x,
+        y: bounds.y,
+        width: bounds.width,
+        height: bounds.height
+      },
+      opening
+    };
   }
 
   // Compute Voronoi-like polygons for all voroboids
@@ -678,7 +709,23 @@ export class VoroboidsSystem {
   // Both buckets have magnets, this instantly switches which one is active
   shiftMagnets(): void {
     // Toggle between 'a' and 'b'
-    this.activeMagnetContainer = this.activeMagnetContainer === 'a' ? 'b' : 'a';
+    const newTarget = this.activeMagnetContainer === 'a' ? 'b' : 'a';
+    this.pourTo(newTarget);
+  }
+
+  // Pour all voroboids to a target container
+  // Each voroboid gets a staggered departure delay based on distance
+  pourTo(targetId: string): void {
+    const targetContainer = this.containers.get(targetId);
+    if (!targetContainer) return;
+
+    this.activeMagnetContainer = targetId;
+    const opening = this.getOpeningCenter(targetContainer);
+
+    for (const voroboid of this.voroboids) {
+      const dist = magnitude(sub(voroboid.position, opening));
+      voroboid.setTargetContainer(targetId, dist);
+    }
   }
 
   // Get which container's magnet is currently active
