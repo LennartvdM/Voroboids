@@ -60,26 +60,24 @@ export interface MagnetConfig {
 
 // Physics constants - voroboids are bold individuals that fill space
 export const PHYSICS = {
-  // Movement - low damping = energetic
-  DAMPING: 0.92,              // Light friction - they keep moving
-  MAX_SPEED: 8,               // Speed limit
+  // Movement
+  DAMPING: 0.94,              // Friction
+  MAX_SPEED: 6,               // Speed limit
 
-  // Repulsion - they push each other away
-  REPULSION_RANGE: 120,       // How far they sense each other
-  REPULSION_STRENGTH: 0.8,    // How hard they push apart
-
-  // Space-filling - they seek empty areas
-  SPREAD_STRENGTH: 0.3,       // Force toward container edges
+  // Repulsion - THE spreading force (linear falloff, not quadratic)
+  REPULSION_RANGE: 100,       // How far they sense each other
+  REPULSION_STRENGTH: 1.2,    // Strong push apart
 
   // Wall interaction
-  WALL_RANGE: 30,             // Wall sensing range
-  WALL_PUSH: 1.5,             // Wall repulsion strength
+  WALL_RANGE: 35,             // Wall sensing range
+  WALL_PUSH: 2.0,             // Wall repulsion strength
 
   // Navigation
-  SEEK_STRENGTH: 0.5,         // Force toward target when outside
+  SEEK_STRENGTH: 0.4,         // Force toward target when outside
 
-  // Collision
-  MIN_DIST: 40,               // Minimum distance between centers
+  // Collision - hard push when too close
+  MIN_DIST: 45,               // Minimum distance between centers
+  COLLISION_PUSH: 0.4,        // Velocity added on collision
 };
 
 // Water balloon physics defaults
