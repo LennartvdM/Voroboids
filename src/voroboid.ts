@@ -29,11 +29,10 @@ export class Voroboid {
   private readonly settleDelay: number = 200;      // ms before considered settled
 
   // Polygon tessellation
-  polygon: Vec2[] = [];              // Computed boundary vertices (smoothed)
+  polygon: Vec2[] = [];              // Computed boundary vertices
   targetArea: number = 2500;         // Desired area (based on blobRadius^2 * π)
   currentArea: number = 0;           // Actual area of current polygon
   pressure: number = 1;              // Internal pressure = targetArea / currentArea
-  private readonly smoothingFactor = 0.15;  // How quickly polygon interpolates (0-1)
 
   // Content
   content?: VoroboidContent;
@@ -74,30 +73,25 @@ export class Voroboid {
   }
 
   // Main update - apply all forces based on local rules
-  // The voroboid doesn't know about containers - just walls, neighbors, and gravity
+  // Water balloon physics: gravity (primary) + collision (reactive) + wall (constraint)
   update(deltaTime: number, neighbors: Voroboid[], walls: Wall[], config: FlockConfig, magnet?: MagnetConfig): void {
     this.acceleration = vec2(0, 0);
 
-    // Apply gravity toward container magnet (primary settling force)
+    // 1. GRAVITY - the primary force, always pulling toward magnet
     if (magnet) {
       const gravityForce = this.computeGravity(magnet, config);
       this.applyForce(gravityForce);
     }
 
-    // Boid behaviors - reduced when settling
-    const separation = this.computeSeparation(neighbors, config);
-    const cohesion = this.computeCohesion(neighbors, config);
-    const alignment = this.computeAlignment(neighbors, config);
+    // 2. COLLISION - reactive force, only when overlapping neighbors
+    const collisionForce = this.computeCollisionForce(neighbors, config);
+    this.applyForce(collisionForce);
 
-    this.applyForce(mul(separation, config.separationWeight));
-    this.applyForce(mul(cohesion, config.cohesionWeight * 0.3)); // Reduce cohesion for settling
-    this.applyForce(mul(alignment, config.alignmentWeight * 0.2)); // Reduce alignment for settling
-
-    // Wall repulsion - always active for all walls
+    // 3. WALL REPULSION - stay inside container
     const wallForce = this.computeWallRepulsion(walls, config);
     this.applyForce(mul(wallForce, config.wallRepulsionStrength));
 
-    // Strong damping - water balloons are heavy
+    // 4. HEAVY DAMPING - water balloons don't bounce
     this.applyForce(mul(this.velocity, -config.damping));
 
     // Integrate physics
@@ -105,16 +99,14 @@ export class Voroboid {
     this.velocity = limit(this.velocity, config.maxSpeed);
     this.position = add(this.position, mul(this.velocity, deltaTime * 0.06));
 
-    // Position correction for overlaps (hard constraint)
+    // Hard constraints - position correction
     this.resolveCollisions(neighbors);
-
-    // Constrain to walls (hard position constraint)
     this.constrainToWalls(walls, config);
 
-    // Check if settled
+    // Settling detection
     this.checkSettled(deltaTime);
 
-    // Update wobble
+    // Update wobble (for fallback rendering)
     this.wobblePhase += deltaTime * 0.001 * this.wobbleSpeed;
   }
 
@@ -202,90 +194,29 @@ export class Voroboid {
     this.acceleration = add(this.acceleration, force);
   }
 
-  // Separation: steer away from nearby neighbors
-  private computeSeparation(neighbors: Voroboid[], config: FlockConfig): Vec2 {
-    const desiredSeparation = this.blobRadius * 2.5;
-    let steer = vec2(0, 0);
-    let count = 0;
+  // Collision force: push away from overlapping neighbors
+  // This is reactive - only applies when voroboids are too close
+  private computeCollisionForce(neighbors: Voroboid[], config: FlockConfig): Vec2 {
+    const minDistance = this.blobRadius * 2.0;  // Collision threshold
+    let force = vec2(0, 0);
 
     for (const other of neighbors) {
       if (other.id === this.id) continue;
-      const d = magnitude(sub(this.position, other.position));
-      if (d > 0 && d < desiredSeparation) {
-        const diff = normalize(sub(this.position, other.position));
-        const weighted = mul(diff, 1 / (d * d)); // Inverse square falloff
-        steer = add(steer, weighted);
-        count++;
+
+      const diff = sub(this.position, other.position);
+      const dist = magnitude(diff);
+
+      if (dist > 0 && dist < minDistance) {
+        // Overlap! Apply repulsion force
+        const overlap = minDistance - dist;
+        const direction = normalize(diff);
+        // Force proportional to overlap (spring-like)
+        const repulsion = mul(direction, overlap * 0.5);
+        force = add(force, repulsion);
       }
     }
 
-    if (count > 0) {
-      steer = mul(steer, 1 / count);
-      if (magnitude(steer) > 0) {
-        steer = mul(normalize(steer), config.maxSpeed);
-        steer = sub(steer, this.velocity);
-        steer = limit(steer, config.maxForce * 2);
-      }
-    }
-
-    return steer;
-  }
-
-  // Cohesion: steer toward center of nearby neighbors
-  private computeCohesion(neighbors: Voroboid[], config: FlockConfig): Vec2 {
-    const neighborDist = this.blobRadius * 6;
-    let sum = vec2(0, 0);
-    let count = 0;
-
-    for (const other of neighbors) {
-      if (other.id === this.id) continue;
-      const d = magnitude(sub(this.position, other.position));
-      if (d > 0 && d < neighborDist) {
-        sum = add(sum, other.position);
-        count++;
-      }
-    }
-
-    if (count > 0) {
-      const center = mul(sum, 1 / count);
-      const desired = sub(center, this.position);
-      if (magnitude(desired) > 0) {
-        const scaled = mul(normalize(desired), config.maxSpeed * 0.5);
-        let steer = sub(scaled, this.velocity);
-        steer = limit(steer, config.maxForce);
-        return steer;
-      }
-    }
-
-    return vec2(0, 0);
-  }
-
-  // Alignment: steer to match velocity of nearby neighbors
-  private computeAlignment(neighbors: Voroboid[], config: FlockConfig): Vec2 {
-    const neighborDist = this.blobRadius * 5;
-    let sum = vec2(0, 0);
-    let count = 0;
-
-    for (const other of neighbors) {
-      if (other.id === this.id) continue;
-      const d = magnitude(sub(this.position, other.position));
-      if (d > 0 && d < neighborDist) {
-        sum = add(sum, other.velocity);
-        count++;
-      }
-    }
-
-    if (count > 0) {
-      const avgVel = mul(sum, 1 / count);
-      if (magnitude(avgVel) > 0) {
-        const desired = mul(normalize(avgVel), config.maxSpeed);
-        let steer = sub(desired, this.velocity);
-        steer = limit(steer, config.maxForce);
-        return steer;
-      }
-    }
-
-    return vec2(0, 0);
+    return limit(force, config.maxForce * 2);
   }
 
   // Wall repulsion: push away from all walls
@@ -374,8 +305,8 @@ export class Voroboid {
       }
     }
 
-    // Smooth interpolation for fluid animation
-    this.polygon = this.smoothPolygon(polygon);
+    // Direct polygon update - smoothness comes from physics (high damping), not interpolation
+    this.polygon = polygon;
 
     // Update current area and pressure
     this.currentArea = Math.abs(computePolygonArea(this.polygon));
@@ -384,22 +315,6 @@ export class Voroboid {
     } else {
       this.pressure = 1;
     }
-  }
-
-  // Smooth polygon vertices over time for fluid animation
-  private smoothPolygon(target: Vec2[]): Vec2[] {
-    // If no previous polygon or vertex count changed, use target directly
-    if (this.polygon.length === 0 || this.polygon.length !== target.length) {
-      return target.map(p => ({ ...p }));
-    }
-
-    // Interpolate each vertex toward target
-    const smoothed: Vec2[] = [];
-    for (let i = 0; i < target.length; i++) {
-      smoothed.push(lerpVec2(this.polygon[i], target[i], this.smoothingFactor));
-    }
-
-    return smoothed;
   }
 
   // Fallback polygon when computation fails

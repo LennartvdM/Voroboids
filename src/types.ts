@@ -33,7 +33,7 @@ export interface VoroboidConfig {
 }
 
 export interface FlockConfig {
-  // Boid behavior weights
+  // Legacy weights (kept for compatibility but unused)
   separationWeight: number;
   alignmentWeight: number;
   cohesionWeight: number;
@@ -46,13 +46,13 @@ export interface FlockConfig {
   wallRepulsionRange: number;
   wallRepulsionStrength: number;
 
-  // Damping (how quickly they settle)
+  // Damping - water balloons are heavy, they don't bounce
   damping: number;
 
   // Blob appearance
   blobRadius: number;
 
-  // Gravity toward container magnet
+  // Gravity toward container magnet - PRIMARY force
   gravityStrength: number;
 }
 
@@ -63,15 +63,17 @@ export interface MagnetConfig {
   direction?: Vec2;      // Optional: directional gravity instead of point
 }
 
+// Water balloon physics defaults
+// Key insight: gravity dominates, damping is high, collision is reactive
 export const DEFAULT_FLOCK_CONFIG: FlockConfig = {
-  separationWeight: 1.5,
-  alignmentWeight: 1.0,
-  cohesionWeight: 1.0,
-  maxSpeed: 6,
-  maxForce: 0.3,
-  wallRepulsionRange: 50,
-  wallRepulsionStrength: 2.0,
-  damping: 0.15,  // Increased for settling behavior (water balloons are heavy)
+  separationWeight: 0,     // Unused - collision is handled directly
+  alignmentWeight: 0,      // Removed - no flocking
+  cohesionWeight: 0,       // Removed - no flocking
+  maxSpeed: 4,             // Slower - water balloons are sluggish
+  maxForce: 0.5,           // Collision response strength
+  wallRepulsionRange: 60,  // Wall sensing range
+  wallRepulsionStrength: 2.5,
+  damping: 0.4,            // HEAVY damping - water balloons don't bounce
   blobRadius: 25,
-  gravityStrength: 0.5,  // Gravity pull toward container magnet
+  gravityStrength: 3.0,    // STRONG gravity - primary force
 };

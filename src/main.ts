@@ -9,16 +9,17 @@ const worldCanvas = document.getElementById('world-canvas') as HTMLCanvasElement
 const worldContainer = document.querySelector('.demo-area') as HTMLElement;
 
 // Initialize the system with world canvas
+// Water balloon physics: gravity dominates, high damping, no flocking
 const system = new VoroboidsSystem(worldCanvas, worldContainer, {
-  maxSpeed: 6,
+  maxSpeed: 4,                 // Slower - water balloons are sluggish
   blobRadius: 25,
-  wallRepulsionRange: 50,
-  wallRepulsionStrength: 2.0,
-  damping: 0.15,              // Increased for settling (water balloons are heavy)
-  separationWeight: 2.0,       // Stronger separation for collision avoidance
-  cohesionWeight: 0.3,         // Reduced for settling behavior
-  alignmentWeight: 0.2,        // Reduced for settling behavior
-  gravityStrength: 0.8,        // Strong gravity pull toward container bottom
+  wallRepulsionRange: 60,
+  wallRepulsionStrength: 2.5,
+  damping: 0.4,                // HEAVY damping - water balloons don't bounce
+  separationWeight: 0,         // Unused - collision handled directly
+  cohesionWeight: 0,           // Removed - no flocking
+  alignmentWeight: 0,          // Removed - no flocking
+  gravityStrength: 3.0,        // STRONG gravity - primary force
 });
 
 // Get container elements (divs, not canvases)
