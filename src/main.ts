@@ -66,10 +66,15 @@ rotateBBtn?.addEventListener('click', () => {
 
 shiftMagnetsBtn?.addEventListener('click', () => {
   system.shiftMagnets();
-  // Update button text to show current state
-  const shifted = system.areMagnetsShifted();
-  shiftMagnetsBtn.textContent = shifted ? 'Shift Magnets ⇆' : 'Shift Magnets ⇄';
+  // Update button text to show which bucket's magnet is active
+  const active = system.getActiveMagnetContainer();
+  shiftMagnetsBtn.textContent = `Magnet: Bucket ${active.toUpperCase()}`;
 });
+
+// Set initial button text
+if (shiftMagnetsBtn) {
+  shiftMagnetsBtn.textContent = `Magnet: Bucket ${system.getActiveMagnetContainer().toUpperCase()}`;
+}
 
 // Handle window resize
 window.addEventListener('resize', () => {
