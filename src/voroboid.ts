@@ -137,23 +137,23 @@ export class Voroboid {
     }
   }
 
-  // Hard constraint to stay inside walls
+  // Hard constraint to stay inside walls - voroboids cannot pass through walls
   private constrainToWalls(walls: Wall[], _config: FlockConfig): void {
-    const margin = this.blobRadius * 0.8;
+    const margin = this.blobRadius * 0.9;
 
     for (const wall of walls) {
       const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
 
       if (distance < margin) {
-        // Push away from wall
+        // Push away from wall - full correction to prevent any penetration
         const away = normalize(sub(this.position, point));
         const penetration = margin - distance;
-        this.position = add(this.position, mul(away, penetration));
+        this.position = add(this.position, mul(away, penetration * 1.1)); // Overshoot slightly to ensure separation
 
-        // Dampen velocity toward wall
+        // Kill velocity toward wall completely (inelastic collision)
         const velTowardWall = this.velocity.x * (-away.x) + this.velocity.y * (-away.y);
         if (velTowardWall > 0) {
-          this.velocity = sub(this.velocity, mul(away, -velTowardWall * 0.5));
+          this.velocity = sub(this.velocity, mul(away, -velTowardWall * 0.9));
         }
       }
     }
@@ -230,9 +230,10 @@ export class Voroboid {
       if (distance < config.wallRepulsionRange && distance > 0) {
         // Direction away from wall
         const away = normalize(sub(this.position, point));
-        // Strength increases as we get closer (inverse relationship)
-        const strength = (config.wallRepulsionRange - distance) / config.wallRepulsionRange;
-        force = add(force, mul(away, strength * strength));
+        // Strength increases dramatically as we get closer (cubic falloff for stronger near-wall repulsion)
+        const normalizedDist = (config.wallRepulsionRange - distance) / config.wallRepulsionRange;
+        const strength = normalizedDist * normalizedDist * normalizedDist;
+        force = add(force, mul(away, strength * 2)); // Double strength for more robust wall avoidance
       }
     }
 

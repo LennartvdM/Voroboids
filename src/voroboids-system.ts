@@ -173,11 +173,71 @@ export class VoroboidsSystem {
     return nearestContainer;
   }
 
-  // Get the currently active magnet - ALL voroboids are attracted to this magnet
-  // Both buckets have magnets at their bottom, but only one is "on" at a time
-  private getMagnetForVoroboid(_voroboid: Voroboid): MagnetConfig | undefined {
+  // Get the magnet configuration for a voroboid based on its position
+  // Voroboids inside their own container are pulled toward the active magnet
+  // Voroboids in a different container are guided toward that container's opening first
+  private getMagnetForVoroboid(voroboid: Voroboid): MagnetConfig | undefined {
     const activeContainer = this.containers.get(this.activeMagnetContainer);
-    return activeContainer?.getMagnet();
+    if (!activeContainer) return undefined;
+
+    // Find which container this voroboid is currently in
+    const currentContainer = this.getContainerForVoroboid(voroboid);
+
+    // If voroboid is in the active container, attract toward the magnet
+    if (currentContainer && this.getContainerIdFor(currentContainer) === this.activeMagnetContainer) {
+      return activeContainer.getMagnet();
+    }
+
+    // If voroboid is in a different container, guide it toward that container's opening
+    // by using a direction that points toward the opening
+    if (currentContainer) {
+      const openingDirection = this.getOpeningDirection(currentContainer);
+      return {
+        position: activeContainer.getMagnet().position,
+        direction: openingDirection,
+        strength: activeContainer.getMagnet().strength
+      };
+    }
+
+    // Voroboid is outside all containers - pull toward active container's opening
+    const openingCenter = this.getOpeningCenter(activeContainer);
+    return {
+      position: openingCenter,
+      strength: activeContainer.getMagnet().strength
+    };
+  }
+
+  // Get the container ID for a container instance
+  private getContainerIdFor(container: Container): string | undefined {
+    for (const [id, c] of this.containers.entries()) {
+      if (c === container) return id;
+    }
+    return undefined;
+  }
+
+  // Get direction vector pointing toward a container's opening
+  private getOpeningDirection(container: Container): Vec2 {
+    switch (container.opening) {
+      case 'top': return vec2(0, -1);
+      case 'bottom': return vec2(0, 1);
+      case 'left': return vec2(-1, 0);
+      case 'right': return vec2(1, 0);
+    }
+  }
+
+  // Get the center point of a container's opening
+  private getOpeningCenter(container: Container): Vec2 {
+    const x = container.worldX;
+    const y = container.worldY;
+    const w = container.width;
+    const h = container.height;
+
+    switch (container.opening) {
+      case 'top': return vec2(x + w / 2, y);
+      case 'bottom': return vec2(x + w / 2, y + h);
+      case 'left': return vec2(x, y + h / 2);
+      case 'right': return vec2(x + w, y + h / 2);
+    }
   }
 
   private render(): void {
@@ -307,6 +367,44 @@ export class VoroboidsSystem {
     for (const wall of container.walls) {
       this.ctx.moveTo(wall.start.x, wall.start.y);
       this.ctx.lineTo(wall.end.x, wall.end.y);
+    }
+    this.ctx.stroke();
+
+    // Render opening side in pink
+    this.renderContainerOpening(container);
+  }
+
+  // Render the opening side of a container in pink
+  private renderContainerOpening(container: Container): void {
+    const x = container.worldX;
+    const y = container.worldY;
+    const w = container.width;
+    const h = container.height;
+
+    // Pink color for openings
+    this.ctx.strokeStyle = '#ff69b4'; // Hot pink
+    this.ctx.lineWidth = 4;
+    this.ctx.lineCap = 'round';
+
+    // Draw pink indicator on the opening side
+    this.ctx.beginPath();
+    switch (container.opening) {
+      case 'top':
+        this.ctx.moveTo(x, y);
+        this.ctx.lineTo(x + w, y);
+        break;
+      case 'bottom':
+        this.ctx.moveTo(x, y + h);
+        this.ctx.lineTo(x + w, y + h);
+        break;
+      case 'left':
+        this.ctx.moveTo(x, y);
+        this.ctx.lineTo(x, y + h);
+        break;
+      case 'right':
+        this.ctx.moveTo(x + w, y);
+        this.ctx.lineTo(x + w, y + h);
+        break;
     }
     this.ctx.stroke();
   }
