@@ -91,10 +91,8 @@ export class Voroboid {
            pos.y >= bounds.y && pos.y <= bounds.y + bounds.height;
   }
 
-  // Main update - simple particle physics
-  // 1. Repel from neighbors (spread out!)
-  // 2. If outside target, seek the opening
-  // 3. Stay away from walls
+  // Main update - pressure-based particle physics
+  // Cramped voroboids push harder → breaks clump equilibrium
   update(
     _deltaTime: number,
     neighbors: Voroboid[],
@@ -105,8 +103,13 @@ export class Voroboid {
   ): void {
     let force = vec2(0, 0);
 
-    // FORCE 1: Repulsion from neighbors - this IS the spreading force
-    // Linear falloff so it's effective at medium distances
+    // My pressure determines how hard I push (cramped = push harder)
+    // pressure > 1 means I want more space
+    const myPush = Math.max(1, this.pressure);
+
+    // FORCE 1: Pressure-based repulsion from neighbors
+    // Cramped voroboids push harder - this breaks clump equilibrium
+    let neighborCount = 0;
     for (const neighbor of neighbors) {
       if (neighbor.id === this.id) continue;
 
@@ -114,29 +117,35 @@ export class Voroboid {
       const dist = magnitude(diff);
 
       if (dist > 0 && dist < PHYSICS.REPULSION_RANGE) {
-        // Linear falloff - stays strong at medium distances
+        neighborCount++;
         const t = 1 - dist / PHYSICS.REPULSION_RANGE;
-        const strength = PHYSICS.REPULSION_STRENGTH * t;
+        // My pressure boosts how hard I push
+        const strength = PHYSICS.REPULSION_STRENGTH * t * myPush;
         force = add(force, mul(normalize(diff), strength));
       }
     }
 
-    // FORCE 2: Seek target container if outside
+    // FORCE 2: Crowd escape - more neighbors = stronger outward push
+    // This creates asymmetry: center of clump has more neighbors → pushed out
+    if (neighborCount > 2) {
+      const crowdBoost = (neighborCount - 2) * 0.15;
+      force = mul(force, 1 + crowdBoost);
+    }
+
+    // FORCE 3: Seek target container if outside
     if (targetInfo) {
       const isInside = this.insideContainer(this.position, targetInfo.bounds);
 
       if (!isInside) {
-        // Seek the opening
         const toOpening = sub(targetInfo.opening, this.position);
         const dist = magnitude(toOpening);
         if (dist > 1) {
           force = add(force, mul(normalize(toOpening), PHYSICS.SEEK_STRENGTH));
         }
       }
-      // Inside: repulsion from neighbors handles spreading - no center-based force needed
     }
 
-    // FORCE 3: Wall avoidance
+    // FORCE 4: Wall avoidance
     for (const wall of walls) {
       const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
       if (distance > 0 && distance < PHYSICS.WALL_RANGE) {
@@ -144,10 +153,9 @@ export class Voroboid {
         const strength = PHYSICS.WALL_PUSH * Math.pow(1 - distance / PHYSICS.WALL_RANGE, 2);
         force = add(force, mul(away, strength));
 
-        // Hard boundary - don't go through walls
+        // Hard boundary
         if (distance < 15) {
           this.position = add(point, mul(away, 15));
-          // Bounce off wall
           const wallVec = sub(wall.end, wall.start);
           const wallNorm = normalize(vec2(-wallVec.y, wallVec.x));
           const velDot = dot(this.velocity, wallNorm);
