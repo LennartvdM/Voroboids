@@ -33,11 +33,6 @@ export interface VoroboidConfig {
 }
 
 export interface FlockConfig {
-  // Legacy weights (kept for compatibility but unused)
-  separationWeight: number;
-  alignmentWeight: number;
-  cohesionWeight: number;
-
   // Movement
   maxSpeed: number;
   maxForce: number;
@@ -66,9 +61,6 @@ export interface MagnetConfig {
 // Water balloon physics defaults
 // Key insight: gravity dominates, damping is high, collision is reactive
 export const DEFAULT_FLOCK_CONFIG: FlockConfig = {
-  separationWeight: 0,     // Unused - collision is handled directly
-  alignmentWeight: 0,      // Removed - no flocking
-  cohesionWeight: 0,       // Removed - no flocking
   maxSpeed: 4,             // Slower - water balloons are sluggish
   maxForce: 0.5,           // Collision response strength
   wallRepulsionRange: 60,  // Wall sensing range
