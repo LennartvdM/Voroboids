@@ -18,10 +18,18 @@ export interface Wall {
   end: Vec2;
 }
 
+// Content that a voroboid can display
+export type VoroboidContent =
+  | { type: 'color'; color: string }          // Solid color fill
+  | { type: 'image'; src: string }            // Image (URL or data URI)
+  | { type: 'text'; text: string; fontSize?: number; fontColor?: string }  // Text content
+  | { type: 'gradient'; colors: string[] };   // Gradient fill
+
 export interface VoroboidConfig {
   id: number;
   color: string;
   weight: number;
+  content?: VoroboidContent;  // Optional content to display
 }
 
 export interface FlockConfig {
@@ -43,6 +51,16 @@ export interface FlockConfig {
 
   // Blob appearance
   blobRadius: number;
+
+  // Gravity toward container magnet
+  gravityStrength: number;
+}
+
+// Magnet configuration for containers
+export interface MagnetConfig {
+  position: Vec2;        // Point attractor in container space
+  strength: number;      // Pull force (overrides config if set)
+  direction?: Vec2;      // Optional: directional gravity instead of point
 }
 
 export const DEFAULT_FLOCK_CONFIG: FlockConfig = {
@@ -53,6 +71,7 @@ export const DEFAULT_FLOCK_CONFIG: FlockConfig = {
   maxForce: 0.3,
   wallRepulsionRange: 50,
   wallRepulsionStrength: 2.0,
-  damping: 0.02,
+  damping: 0.15,  // Increased for settling behavior (water balloons are heavy)
   blobRadius: 25,
+  gravityStrength: 0.5,  // Gravity pull toward container magnet
 };

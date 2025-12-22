@@ -1,7 +1,7 @@
 // Container - a region in world space that defines walls
 // Containers don't render - they just define geometry
 
-import type { Wall } from './types';
+import type { Vec2, Wall, MagnetConfig } from './types';
 import { vec2 } from './math';
 
 export type OpeningSide = 'top' | 'bottom' | 'left' | 'right';
@@ -22,11 +22,50 @@ export class Container {
   // The actual wall segments (3 walls, gap on opening side)
   walls: Wall[] = [];
 
+  // Magnet - gravity attractor (opposite side of opening)
+  magnet: MagnetConfig;
+
   constructor(element: HTMLElement, opening: OpeningSide) {
     this.element = element;
     this.opening = opening;
     this.width = element.offsetWidth;
     this.height = element.offsetHeight;
+    this.magnet = {
+      position: vec2(0, 0),
+      strength: 0.5,
+    };
+    this.updateMagnet();
+  }
+
+  // Update magnet position based on opening side
+  // Magnet is on the opposite side of the opening (gravity pulls toward it)
+  private updateMagnet(): void {
+    const centerX = this.worldX + this.width / 2;
+    const centerY = this.worldY + this.height / 2;
+
+    // Magnet position is on the wall opposite to the opening
+    switch (this.opening) {
+      case 'top':
+        // Opening at top, magnet at bottom
+        this.magnet.position = vec2(centerX, this.worldY + this.height);
+        this.magnet.direction = vec2(0, 1);
+        break;
+      case 'bottom':
+        // Opening at bottom, magnet at top
+        this.magnet.position = vec2(centerX, this.worldY);
+        this.magnet.direction = vec2(0, -1);
+        break;
+      case 'left':
+        // Opening at left, magnet at right
+        this.magnet.position = vec2(this.worldX + this.width, centerY);
+        this.magnet.direction = vec2(1, 0);
+        break;
+      case 'right':
+        // Opening at right, magnet at left
+        this.magnet.position = vec2(this.worldX, centerY);
+        this.magnet.direction = vec2(-1, 0);
+        break;
+    }
   }
 
   // Update position relative to a reference element (world container)
@@ -37,6 +76,7 @@ export class Container {
     this.width = rect.width;
     this.height = rect.height;
     this.rebuildWalls();
+    this.updateMagnet();
   }
 
   // Build wall segments based on opening side
@@ -68,6 +108,7 @@ export class Container {
     const currentIndex = sequence.indexOf(this.opening);
     this.opening = sequence[(currentIndex + 1) % 4];
     this.rebuildWalls();
+    this.updateMagnet();
   }
 
   // Get bounds for spawning voroboids inside
@@ -78,5 +119,20 @@ export class Container {
       width: this.width,
       height: this.height,
     };
+  }
+
+  // Get magnet info for gravity calculations
+  getMagnet(): MagnetConfig {
+    return this.magnet;
+  }
+
+  // Check if a point is inside this container
+  containsPoint(point: Vec2): boolean {
+    return (
+      point.x >= this.worldX &&
+      point.x <= this.worldX + this.width &&
+      point.y >= this.worldY &&
+      point.y <= this.worldY + this.height
+    );
   }
 }

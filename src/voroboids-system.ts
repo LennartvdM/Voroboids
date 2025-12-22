@@ -1,11 +1,11 @@
 // VoroboidsSystem - unified world with global rendering
 // All voroboids exist in world space, rendered on a single canvas
 
-import type { VoroboidConfig, FlockConfig, Wall } from './types';
+import type { Vec2, VoroboidConfig, FlockConfig, Wall, MagnetConfig } from './types';
 import { DEFAULT_FLOCK_CONFIG } from './types';
 import { Voroboid } from './voroboid';
 import { Container, OpeningSide } from './container';
-import { vec2 } from './math';
+import { vec2, insetPolygon } from './math';
 
 export class VoroboidsSystem {
   private containers: Map<string, Container> = new Map();
@@ -117,8 +117,82 @@ export class VoroboidsSystem {
     const allWalls = this.getAllWalls();
 
     for (const voroboid of this.voroboids) {
-      voroboid.update(deltaTime, this.voroboids, allWalls, this.config);
+      // Find which container this voroboid is in and get its magnet
+      const magnet = this.getMagnetForVoroboid(voroboid);
+      voroboid.update(deltaTime, this.voroboids, allWalls, this.config, magnet);
     }
+
+    // Compute polygons for tessellation
+    this.computePolygons();
+  }
+
+  // Compute Voronoi-like polygons for all voroboids
+  private computePolygons(): void {
+    for (const voroboid of this.voroboids) {
+      // Find which container this voroboid is in
+      const container = this.getContainerForVoroboid(voroboid);
+      if (container) {
+        const bounds = container.getBounds();
+        voroboid.computePolygon(this.voroboids, bounds);
+      }
+    }
+  }
+
+  // Find which container a voroboid is in
+  private getContainerForVoroboid(voroboid: Voroboid): Container | undefined {
+    for (const container of this.containers.values()) {
+      if (container.containsPoint(voroboid.position)) {
+        return container;
+      }
+    }
+    // Return nearest container if not inside any
+    let nearestContainer: Container | undefined;
+    let minDist = Infinity;
+
+    for (const container of this.containers.values()) {
+      const bounds = container.getBounds();
+      const centerX = bounds.x + bounds.width / 2;
+      const centerY = bounds.y + bounds.height / 2;
+      const dx = voroboid.position.x - centerX;
+      const dy = voroboid.position.y - centerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < minDist) {
+        minDist = dist;
+        nearestContainer = container;
+      }
+    }
+
+    return nearestContainer;
+  }
+
+  // Find the container a voroboid is in and return its magnet
+  private getMagnetForVoroboid(voroboid: Voroboid): MagnetConfig | undefined {
+    for (const container of this.containers.values()) {
+      if (container.containsPoint(voroboid.position)) {
+        return container.getMagnet();
+      }
+    }
+    // If not in any container, find the nearest one
+    // This helps voroboids that are transitioning between containers
+    let nearestContainer: Container | undefined;
+    let minDist = Infinity;
+
+    for (const container of this.containers.values()) {
+      const bounds = container.getBounds();
+      const centerX = bounds.x + bounds.width / 2;
+      const centerY = bounds.y + bounds.height / 2;
+      const dx = voroboid.position.x - centerX;
+      const dy = voroboid.position.y - centerY;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < minDist) {
+        minDist = dist;
+        nearestContainer = container;
+      }
+    }
+
+    return nearestContainer?.getMagnet();
   }
 
   private render(): void {
@@ -178,6 +252,204 @@ export class VoroboidsSystem {
   }
 
   private renderVoroboid(voroboid: Voroboid): void {
+    // Use polygon tessellation if available, otherwise fall back to blob
+    const polygon = voroboid.polygon;
+    if (polygon.length >= 3) {
+      this.renderPolygon(voroboid, polygon);
+    } else {
+      this.renderBlob(voroboid);
+    }
+  }
+
+  // Render Voronoi-like polygon cell
+  private renderPolygon(voroboid: Voroboid, polygon: Vec2[]): void {
+    // Inset polygon for gap between cells
+    const gap = 2;
+    const inset = insetPolygon(polygon, gap);
+    if (inset.length < 3) return;
+
+    // Get bounds for content rendering
+    const bounds = this.getPolygonBounds(inset);
+    const centerX = bounds.x + bounds.width / 2;
+    const centerY = bounds.y + bounds.height / 2;
+    const radius = Math.max(bounds.width, bounds.height) / 2;
+
+    // Draw rounded polygon path (for clipping)
+    this.drawRoundedPolygon(inset, 6);
+
+    // Check if voroboid has content
+    if (voroboid.content) {
+      this.renderContent(voroboid, inset, bounds);
+    } else {
+      // Default gradient fill
+      const gradient = this.ctx.createRadialGradient(
+        centerX, centerY, 0,
+        centerX, centerY, radius
+      );
+      gradient.addColorStop(0, voroboid.color);
+      gradient.addColorStop(1, this.darkenColor(voroboid.color, 0.25));
+
+      this.ctx.fillStyle = gradient;
+      this.ctx.fill();
+    }
+
+    // Subtle stroke
+    this.ctx.strokeStyle = this.lightenColor(voroboid.color, 0.1);
+    this.ctx.lineWidth = 1;
+    this.ctx.stroke();
+  }
+
+  // Render content clipped to polygon
+  private renderContent(
+    voroboid: Voroboid,
+    _polygon: Vec2[],
+    bounds: { x: number; y: number; width: number; height: number }
+  ): void {
+    const content = voroboid.content;
+    if (!content) return;
+
+    const centerX = bounds.x + bounds.width / 2;
+    const centerY = bounds.y + bounds.height / 2;
+
+    switch (content.type) {
+      case 'color':
+        this.ctx.fillStyle = content.color;
+        this.ctx.fill();
+        break;
+
+      case 'gradient':
+        if (content.colors.length >= 2) {
+          const gradient = this.ctx.createLinearGradient(
+            bounds.x, bounds.y,
+            bounds.x + bounds.width, bounds.y + bounds.height
+          );
+          content.colors.forEach((color, i) => {
+            gradient.addColorStop(i / (content.colors.length - 1), color);
+          });
+          this.ctx.fillStyle = gradient;
+        } else if (content.colors.length === 1) {
+          this.ctx.fillStyle = content.colors[0];
+        }
+        this.ctx.fill();
+        break;
+
+      case 'image':
+        if (voroboid.imageLoaded && voroboid.contentImage) {
+          // Save context for clipping
+          this.ctx.save();
+          this.ctx.clip();
+
+          // Calculate image dimensions to cover the polygon (cover, not contain)
+          const img = voroboid.contentImage;
+          const imgAspect = img.width / img.height;
+          const boundsAspect = bounds.width / bounds.height;
+
+          let drawWidth: number, drawHeight: number, drawX: number, drawY: number;
+
+          if (imgAspect > boundsAspect) {
+            // Image is wider - fit height, crop width
+            drawHeight = bounds.height;
+            drawWidth = drawHeight * imgAspect;
+            drawX = bounds.x - (drawWidth - bounds.width) / 2;
+            drawY = bounds.y;
+          } else {
+            // Image is taller - fit width, crop height
+            drawWidth = bounds.width;
+            drawHeight = drawWidth / imgAspect;
+            drawX = bounds.x;
+            drawY = bounds.y - (drawHeight - bounds.height) / 2;
+          }
+
+          this.ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
+          this.ctx.restore();
+        } else {
+          // Image not loaded yet - show placeholder
+          this.ctx.fillStyle = voroboid.color;
+          this.ctx.fill();
+        }
+        break;
+
+      case 'text':
+        // Fill background first
+        this.ctx.fillStyle = voroboid.color;
+        this.ctx.fill();
+
+        // Render text
+        this.ctx.save();
+        this.ctx.clip();
+
+        const fontSize = content.fontSize || Math.min(bounds.width, bounds.height) * 0.3;
+        const fontColor = content.fontColor || '#ffffff';
+
+        this.ctx.font = `bold ${fontSize}px sans-serif`;
+        this.ctx.fillStyle = fontColor;
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(content.text, centerX, centerY, bounds.width * 0.9);
+
+        this.ctx.restore();
+        break;
+    }
+  }
+
+  // Draw polygon with rounded corners
+  private drawRoundedPolygon(polygon: Vec2[], cornerRadius: number): void {
+    if (polygon.length < 3) return;
+
+    this.ctx.beginPath();
+
+    for (let i = 0; i < polygon.length; i++) {
+      const prev = polygon[(i - 1 + polygon.length) % polygon.length];
+      const curr = polygon[i];
+      const next = polygon[(i + 1) % polygon.length];
+
+      // Vectors to adjacent vertices
+      const toPrev = { x: prev.x - curr.x, y: prev.y - curr.y };
+      const toNext = { x: next.x - curr.x, y: next.y - curr.y };
+
+      // Distances
+      const distPrev = Math.sqrt(toPrev.x * toPrev.x + toPrev.y * toPrev.y);
+      const distNext = Math.sqrt(toNext.x * toNext.x + toNext.y * toNext.y);
+
+      // Limit corner radius to half the shorter edge
+      const maxRadius = Math.min(distPrev, distNext) / 2;
+      const radius = Math.min(cornerRadius, maxRadius);
+
+      // Points where the arc starts and ends
+      const startX = curr.x + (toPrev.x / distPrev) * radius;
+      const startY = curr.y + (toPrev.y / distPrev) * radius;
+      const endX = curr.x + (toNext.x / distNext) * radius;
+      const endY = curr.y + (toNext.y / distNext) * radius;
+
+      if (i === 0) {
+        this.ctx.moveTo(startX, startY);
+      } else {
+        this.ctx.lineTo(startX, startY);
+      }
+
+      this.ctx.quadraticCurveTo(curr.x, curr.y, endX, endY);
+    }
+
+    this.ctx.closePath();
+  }
+
+  // Get bounding box of polygon
+  private getPolygonBounds(polygon: Vec2[]): { x: number; y: number; width: number; height: number } {
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+
+    for (const p of polygon) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+
+    return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+  }
+
+  // Legacy blob rendering (fallback)
+  private renderBlob(voroboid: Voroboid): void {
     const shape = voroboid.getCurrentShape();
     if (shape.length < 3) return;
 
