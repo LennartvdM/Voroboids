@@ -1,11 +1,26 @@
-// Voroboid - an autonomous organism with simple, consistent rules
-// No modes, no phases - just physics that always applies
+// Voroboid - an autonomous organism with intent-based movement
+// Key behavior: cells steer toward their target, enter fast, and settle naturally
 
 import type { Vec2, Wall, VoroboidConfig, FlockConfig, MagnetConfig, VoroboidContent } from './types';
+import { PHYSICS } from './types';
 import {
-  vec2, add, sub, mul, normalize, magnitude, limit, lerpVec2, dot, pointToSegment,
+  vec2, add, sub, mul, normalize, magnitude, lerpVec2, dot, pointToSegment,
   clipPolygonByPlane, polygonArea as computePolygonArea, circleToPolygon
 } from './math';
+
+// Container bounds for containment checks
+export interface ContainerBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// Info about the target container for navigation
+export interface TargetContainerInfo {
+  bounds: ContainerBounds;
+  opening: Vec2;          // Center point of the opening
+}
 
 export class Voroboid {
   id: number;
@@ -15,18 +30,18 @@ export class Voroboid {
   // Physics - in world coordinates
   position: Vec2;
   velocity: Vec2;
-  acceleration: Vec2;
+  acceleration: Vec2;  // Keep for compatibility
 
   // For rendering blob shape
   blobRadius: number = 25;
   wobblePhase: number = Math.random() * Math.PI * 2;
   wobbleSpeed: number = 3 + Math.random() * 2;
 
-  // Settling state
-  settled: boolean = false;
-  settleTime: number = 0;
-  private readonly settleThreshold: number = 0.5;  // Velocity magnitude threshold
-  private readonly settleDelay: number = 200;      // ms before considered settled
+  // Navigation state - voroboids have intent
+  targetContainerId: string = 'a';
+  departureDelay: number = 0;      // Frames until departure begins
+  departed: boolean = false;       // Has started moving toward target
+  isSettled: boolean = false;      // Has stopped moving
 
   // Polygon tessellation
   polygon: Vec2[] = [];              // Computed boundary vertices
@@ -72,174 +87,137 @@ export class Voroboid {
     img.src = src;
   }
 
-  // Main update - apply all forces based on local rules
-  // Water balloon physics: gravity (primary) + collision (reactive) + wall (constraint)
-  update(deltaTime: number, neighbors: Voroboid[], walls: Wall[], config: FlockConfig, magnet?: MagnetConfig): void {
-    this.acceleration = vec2(0, 0);
+  // Helper: check if position is inside container bounds
+  private insideContainer(pos: Vec2, bounds: ContainerBounds): boolean {
+    return pos.x >= bounds.x && pos.x <= bounds.x + bounds.width &&
+           pos.y >= bounds.y && pos.y <= bounds.y + bounds.height;
+  }
 
-    // 1. GRAVITY - the primary force, always pulling toward magnet
-    if (magnet) {
-      const gravityForce = this.computeGravity(magnet, config);
-      this.applyForce(gravityForce);
+  // Main update - intent-based movement
+  // Inside target: coast with momentum, walls stop movement
+  // Outside target: autopilot steering toward opening
+  update(
+    _deltaTime: number,
+    _neighbors: Voroboid[],
+    walls: Wall[],
+    config: FlockConfig,
+    _magnet?: MagnetConfig,
+    targetInfo?: TargetContainerInfo
+  ): void {
+    // If no target info, fall back to legacy behavior
+    if (!targetInfo) {
+      this.updateLegacy(_deltaTime, walls, config);
+      return;
     }
 
-    // 2. COLLISION - reactive force, only when overlapping neighbors
-    const collisionForce = this.computeCollisionForce(neighbors, config);
-    this.applyForce(collisionForce);
+    const isInside = this.insideContainer(this.position, targetInfo.bounds);
 
-    // 3. WALL REPULSION - stay inside container
-    const wallForce = this.computeWallRepulsion(walls, config);
-    this.applyForce(mul(wallForce, config.wallRepulsionStrength));
+    // Handle departure delay - wait before starting to move
+    if (!this.departed && !isInside) {
+      this.departureDelay--;
+      if (this.departureDelay > 0) {
+        return; // Still waiting
+      }
+      this.departed = true;
+      this.isSettled = false;
+    }
 
-    // 4. HEAVY DAMPING - water balloons don't bounce
-    this.applyForce(mul(this.velocity, -config.damping));
+    if (isInside) {
+      // INSIDE TARGET CONTAINER: Coast with momentum
+      // Light damping - momentum carries them to different spots
+      this.velocity = mul(this.velocity, PHYSICS.COAST_DAMPING);
 
-    // Integrate physics
-    this.velocity = add(this.velocity, this.acceleration);
-    this.velocity = limit(this.velocity, config.maxSpeed);
-    this.position = add(this.position, mul(this.velocity, deltaTime * 0.06));
+      // Only walls stop them - hard collision
+      for (const wall of walls) {
+        const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
+        const margin = 20;
+        if (distance < margin && distance > 0) {
+          // Push out of wall
+          const away = normalize(sub(this.position, point));
+          this.position = add(point, mul(away, margin));
+          // Hit wall = stop completely
+          this.velocity = vec2(0, 0);
+        }
+      }
 
-    // Hard constraints - position correction (multiple passes for proper constraint solving)
-    this.resolveCollisions(neighbors);
-    this.resolveCollisions(neighbors);
-    this.resolveCollisions(neighbors);
-    this.constrainToWalls(walls, config);
+      // Check if settled
+      if (magnitude(this.velocity) < PHYSICS.SETTLE_THRESHOLD) {
+        this.isSettled = true;
+      }
 
-    // Settling detection
-    this.checkSettled(deltaTime);
+      // Reset departure state when inside
+      this.departed = false;
+
+    } else {
+      // OUTSIDE TARGET: Autopilot steering toward opening
+      const toOpening = sub(targetInfo.opening, this.position);
+      const dist = magnitude(toOpening);
+      let steer = vec2(0, 0);
+
+      if (dist > 1) {
+        // Desired velocity toward opening
+        const desired = mul(normalize(toOpening), config.maxSpeed);
+        const steerForce = sub(desired, this.velocity);
+        steer = add(steer, mul(normalize(steerForce), PHYSICS.AUTOPILOT_STRENGTH));
+      }
+
+      // Arc steering for curved, natural paths (based on odd/even id)
+      if (dist > 50) {
+        const perp = vec2(-toOpening.y, toOpening.x);
+        const arcSign = (this.id % 2 === 0) ? 1 : -1;
+        steer = add(steer, mul(normalize(perp), arcSign * PHYSICS.ARC_STEERING));
+      }
+
+      // Wall avoidance during flight (no cell collision)
+      for (const wall of walls) {
+        const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
+        if (distance < PHYSICS.WALL_RANGE && distance > 0) {
+          const away = normalize(sub(this.position, point));
+          const strength = Math.pow((PHYSICS.WALL_RANGE - distance) / PHYSICS.WALL_RANGE, 2) * 0.8;
+          steer = add(steer, mul(away, strength));
+        }
+      }
+
+      // Apply steering with flight damping
+      this.velocity = mul(add(this.velocity, steer), PHYSICS.FLIGHT_DAMPING);
+    }
+
+    // Integrate position
+    this.position = add(this.position, this.velocity);
 
     // Update wobble (for fallback rendering)
+    this.wobblePhase += _deltaTime * 0.001 * this.wobbleSpeed;
+  }
+
+  // Legacy update for backwards compatibility (when no target info provided)
+  private updateLegacy(deltaTime: number, walls: Wall[], _config: FlockConfig): void {
+    // Simple coast behavior
+    this.velocity = mul(this.velocity, PHYSICS.COAST_DAMPING);
+
+    // Wall constraints
+    for (const wall of walls) {
+      const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
+      const margin = 20;
+      if (distance < margin && distance > 0) {
+        const away = normalize(sub(this.position, point));
+        this.position = add(point, mul(away, margin));
+        this.velocity = vec2(0, 0);
+      }
+    }
+
+    this.position = add(this.position, this.velocity);
     this.wobblePhase += deltaTime * 0.001 * this.wobbleSpeed;
   }
 
-  // Hard position correction for overlapping voroboids
-  private resolveCollisions(neighbors: Voroboid[]): void {
-    const minDist = this.blobRadius * 1.8; // Slightly less than 2x for slight overlap visual
-
-    for (const other of neighbors) {
-      if (other.id === this.id) continue;
-
-      const diff = sub(this.position, other.position);
-      const dist = magnitude(diff);
-
-      if (dist > 0 && dist < minDist) {
-        // Overlap! Push apart
-        const overlap = minDist - dist;
-        const correction = mul(normalize(diff), overlap * 0.5); // Each moves half
-
-        // Apply position correction
-        this.position = add(this.position, correction);
-
-        // Also dampen relative velocity (inelastic collision)
-        const relVel = sub(this.velocity, other.velocity);
-        const normalDir = normalize(diff);
-        const relVelNormal = mul(normalDir, relVel.x * normalDir.x + relVel.y * normalDir.y);
-        this.velocity = sub(this.velocity, mul(relVelNormal, 0.3));
-      }
+  // Set target container and initiate departure
+  setTargetContainer(containerId: string, distanceToOpening: number): void {
+    if (this.targetContainerId !== containerId) {
+      this.targetContainerId = containerId;
+      // Departure delay based on distance - creates staggered, natural flow
+      this.departureDelay = Math.floor(distanceToOpening / 8);
+      this.departed = false;
+      this.isSettled = false;
     }
-  }
-
-  // Hard constraint to stay inside walls - voroboids cannot pass through walls
-  private constrainToWalls(walls: Wall[], _config: FlockConfig): void {
-    const margin = this.blobRadius * 0.9;
-
-    for (const wall of walls) {
-      const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
-
-      if (distance < margin) {
-        // Push away from wall - full correction to prevent any penetration
-        const away = normalize(sub(this.position, point));
-        const penetration = margin - distance;
-        this.position = add(this.position, mul(away, penetration * 1.1)); // Overshoot slightly to ensure separation
-
-        // Kill velocity toward wall completely (inelastic collision)
-        const velTowardWall = this.velocity.x * (-away.x) + this.velocity.y * (-away.y);
-        if (velTowardWall > 0) {
-          this.velocity = sub(this.velocity, mul(away, -velTowardWall * 0.9));
-        }
-      }
-    }
-  }
-
-  // Check if voroboid has settled (stopped moving significantly)
-  private checkSettled(deltaTime: number): void {
-    if (magnitude(this.velocity) < this.settleThreshold) {
-      this.settleTime += deltaTime;
-      if (this.settleTime > this.settleDelay) {
-        this.settled = true;
-      }
-    } else {
-      this.settleTime = 0;
-      this.settled = false;
-    }
-  }
-
-  // Compute gravity force toward container magnet
-  private computeGravity(magnet: MagnetConfig, config: FlockConfig): Vec2 {
-    // Use directional gravity if specified, otherwise pull toward magnet position
-    if (magnet.direction) {
-      // Constant directional gravity (like real gravity)
-      return mul(magnet.direction, config.gravityStrength);
-    } else {
-      // Point attractor - pull toward magnet position
-      const toMagnet = sub(magnet.position, this.position);
-      const dist = magnitude(toMagnet);
-      if (dist > 0) {
-        // Constant strength in the direction of the magnet
-        return mul(normalize(toMagnet), config.gravityStrength);
-      }
-    }
-    return vec2(0, 0);
-  }
-
-  private applyForce(force: Vec2): void {
-    this.acceleration = add(this.acceleration, force);
-  }
-
-  // Collision force: push away from overlapping neighbors
-  // This is reactive - only applies when voroboids are too close
-  private computeCollisionForce(neighbors: Voroboid[], config: FlockConfig): Vec2 {
-    const minDistance = this.blobRadius * 3.0;  // Larger sensing radius for stacking
-    let force = vec2(0, 0);
-
-    for (const other of neighbors) {
-      if (other.id === this.id) continue;
-
-      const diff = sub(this.position, other.position);
-      const dist = magnitude(diff);
-
-      if (dist > 0 && dist < minDistance) {
-        // Overlap! Apply repulsion force
-        const overlap = minDistance - dist;
-        const direction = normalize(diff);
-        // Force proportional to overlap - strong push for stacking
-        const repulsion = mul(direction, overlap * 1.5);
-        force = add(force, repulsion);
-      }
-    }
-
-    return limit(force, config.maxForce * 2);
-  }
-
-  // Wall repulsion: push away from all walls
-  // Openings are simply... not walls. No wall = no repulsion = can pass through.
-  private computeWallRepulsion(walls: Wall[], config: FlockConfig): Vec2 {
-    let force = vec2(0, 0);
-
-    for (const wall of walls) {
-      const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
-
-      if (distance < config.wallRepulsionRange && distance > 0) {
-        // Direction away from wall
-        const away = normalize(sub(this.position, point));
-        // Strength increases dramatically as we get closer (cubic falloff for stronger near-wall repulsion)
-        const normalizedDist = (config.wallRepulsionRange - distance) / config.wallRepulsionRange;
-        const strength = normalizedDist * normalizedDist * normalizedDist;
-        force = add(force, mul(away, strength * 2)); // Double strength for more robust wall avoidance
-      }
-    }
-
-    return force;
   }
 
   // Get current shape for rendering - wobbly blob (legacy, used as fallback)
@@ -358,5 +336,28 @@ export class Voroboid {
   // Update target area when blobRadius changes
   updateTargetArea(): void {
     this.targetArea = Math.PI * this.blobRadius * this.blobRadius * this.weight;
+  }
+
+  // Simple collision resolution - just respect each other's space, no bounce
+  // Called after all voroboids have updated their positions
+  static resolveCollisions(voroboids: Voroboid[]): void {
+    const minDist = PHYSICS.MIN_COLLISION_DIST;
+
+    for (let i = 0; i < voroboids.length; i++) {
+      for (let j = i + 1; j < voroboids.length; j++) {
+        const a = voroboids[i];
+        const b = voroboids[j];
+
+        const diff = sub(a.position, b.position);
+        const dist = magnitude(diff);
+
+        if (dist > 0 && dist < minDist) {
+          // Push apart - each moves half the overlap distance
+          const fix = mul(normalize(diff), (minDist - dist) * 0.5);
+          a.position = add(a.position, fix);
+          b.position = sub(b.position, fix);
+        }
+      }
+    }
   }
 }
