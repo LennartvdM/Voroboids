@@ -259,6 +259,19 @@ export function rectToPolygon(x: number, y: number, width: number, height: numbe
   ];
 }
 
+// Create a circular polygon (approximated with segments)
+export function circleToPolygon(center: Vec2, radius: number, segments: number = 16): Vec2[] {
+  const points: Vec2[] = [];
+  for (let i = 0; i < segments; i++) {
+    const angle = (i / segments) * Math.PI * 2;
+    points.push(vec2(
+      center.x + Math.cos(angle) * radius,
+      center.y + Math.sin(angle) * radius
+    ));
+  }
+  return points;
+}
+
 // Inset polygon by a fixed distance (shrink toward center)
 export function insetPolygon(polygon: Vec2[], amount: number): Vec2[] {
   if (polygon.length < 3 || amount === 0) return polygon;

@@ -3,8 +3,8 @@
 
 import type { Vec2, Wall, VoroboidConfig, FlockConfig, MagnetConfig, VoroboidContent } from './types';
 import {
-  vec2, add, sub, mul, normalize, magnitude, limit, pointToSegment, lerpVec2,
-  clipPolygonByPlane, polygonArea as computePolygonArea, rectToPolygon
+  vec2, add, sub, mul, normalize, magnitude, limit, lerpVec2, dot, pointToSegment,
+  clipPolygonByPlane, polygonArea as computePolygonArea, circleToPolygon
 } from './math';
 
 export class Voroboid {
@@ -99,7 +99,9 @@ export class Voroboid {
     this.velocity = limit(this.velocity, config.maxSpeed);
     this.position = add(this.position, mul(this.velocity, deltaTime * 0.06));
 
-    // Hard constraints - position correction
+    // Hard constraints - position correction (multiple passes for proper constraint solving)
+    this.resolveCollisions(neighbors);
+    this.resolveCollisions(neighbors);
     this.resolveCollisions(neighbors);
     this.constrainToWalls(walls, config);
 
@@ -197,7 +199,7 @@ export class Voroboid {
   // Collision force: push away from overlapping neighbors
   // This is reactive - only applies when voroboids are too close
   private computeCollisionForce(neighbors: Voroboid[], config: FlockConfig): Vec2 {
-    const minDistance = this.blobRadius * 2.0;  // Collision threshold
+    const minDistance = this.blobRadius * 3.0;  // Larger sensing radius for stacking
     let force = vec2(0, 0);
 
     for (const other of neighbors) {
@@ -210,8 +212,8 @@ export class Voroboid {
         // Overlap! Apply repulsion force
         const overlap = minDistance - dist;
         const direction = normalize(diff);
-        // Force proportional to overlap (spring-like)
-        const repulsion = mul(direction, overlap * 0.5);
+        // Force proportional to overlap - strong push for stacking
+        const repulsion = mul(direction, overlap * 1.5);
         force = add(force, repulsion);
       }
     }
@@ -264,15 +266,33 @@ export class Voroboid {
     return points;
   }
 
-  // Compute Voronoi-like polygon by clipping container bounds against neighbor bisectors
-  computePolygon(neighbors: Voroboid[], containerBounds: { x: number; y: number; width: number; height: number }): void {
-    // Start with container bounds as the initial polygon
-    let polygon = rectToPolygon(
-      containerBounds.x,
-      containerBounds.y,
-      containerBounds.width,
-      containerBounds.height
-    );
+  // Compute Voronoi-like polygon by clipping a circle against walls and neighbor bisectors
+  // The cell knows only about walls and neighbors - no container bounds
+  computePolygon(neighbors: Voroboid[], walls: Wall[]): void {
+    // Start with a large circle around the centroid
+    let polygon = circleToPolygon(this.position, this.blobRadius * 4, 24);
+
+    // Clip against all walls - cells squeeze through openings because openings have no walls
+    for (const wall of walls) {
+      // Compute wall perpendicular - we keep the side where the voroboid is
+      const wallVec = sub(wall.end, wall.start);
+      let perpendicular = normalize(vec2(-wallVec.y, wallVec.x));
+
+      // Check which side the voroboid is on
+      const toVoroboid = sub(this.position, wall.start);
+      if (dot(toVoroboid, perpendicular) > 0) {
+        // perpendicular points toward voroboid, flip it so it points away
+        perpendicular = mul(perpendicular, -1);
+      }
+
+      // Clip polygon - keep the voroboid's side
+      polygon = clipPolygonByPlane(polygon, wall.start, perpendicular);
+
+      if (polygon.length < 3) {
+        polygon = this.getFallbackPolygon();
+        break;
+      }
+    }
 
     // Clip against each neighbor's bisector
     for (const neighbor of neighbors) {
