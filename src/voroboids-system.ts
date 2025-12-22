@@ -23,6 +23,9 @@ export class VoroboidsSystem {
   // Magnet shift state - when true, voroboids are attracted to the other container's magnet
   private magnetsShifted: boolean = false;
 
+  // Debug visualization
+  debug: boolean = true;
+
   constructor(
     worldCanvas: HTMLCanvasElement,
     worldContainer: HTMLElement,
@@ -222,18 +225,92 @@ export class VoroboidsSystem {
     // Clear canvas
     this.ctx.clearRect(0, 0, width, height);
 
+    // DEBUG: Draw canvas bounds (before translate)
+    if (this.debug) {
+      // Full canvas area - RED border
+      this.ctx.strokeStyle = '#ff0000';
+      this.ctx.lineWidth = 4;
+      this.ctx.strokeRect(2, 2, width - 4, height - 4);
+
+      // Label
+      this.ctx.fillStyle = '#ff0000';
+      this.ctx.font = '14px monospace';
+      this.ctx.fillText(`CANVAS: ${width}x${height}`, 10, 20);
+    }
+
     // Offset for bleed zone
     this.ctx.save();
     this.ctx.translate(bleed, bleed);
+
+    // DEBUG: Draw world container area (after translate) - GREEN
+    if (this.debug) {
+      const worldRect = this.worldContainer.getBoundingClientRect();
+      this.ctx.strokeStyle = '#00ff00';
+      this.ctx.lineWidth = 3;
+      this.ctx.strokeRect(0, 0, worldRect.width, worldRect.height);
+
+      this.ctx.fillStyle = '#00ff00';
+      this.ctx.font = '12px monospace';
+      this.ctx.fillText(`WORLD: ${Math.round(worldRect.width)}x${Math.round(worldRect.height)}`, 10, -10);
+    }
 
     // Render container backgrounds
     for (const container of this.containers.values()) {
       this.renderContainerBackground(container);
     }
 
+    // DEBUG: Draw container bounds and magnets
+    if (this.debug) {
+      for (const [id, container] of this.containers.entries()) {
+        const bounds = container.getBounds();
+
+        // Container bounds - CYAN
+        this.ctx.strokeStyle = '#00ffff';
+        this.ctx.lineWidth = 2;
+        this.ctx.strokeRect(bounds.x, bounds.y, bounds.width, bounds.height);
+
+        // Label
+        this.ctx.fillStyle = '#00ffff';
+        this.ctx.font = '11px monospace';
+        this.ctx.fillText(`${id}: (${Math.round(bounds.x)},${Math.round(bounds.y)})`, bounds.x + 5, bounds.y + 15);
+
+        // Magnet position - YELLOW circle
+        const magnet = container.getMagnet();
+        this.ctx.fillStyle = '#ffff00';
+        this.ctx.beginPath();
+        this.ctx.arc(magnet.position.x, magnet.position.y, 8, 0, Math.PI * 2);
+        this.ctx.fill();
+        this.ctx.fillStyle = '#000';
+        this.ctx.font = '10px monospace';
+        this.ctx.textAlign = 'center';
+        this.ctx.fillText('M', magnet.position.x, magnet.position.y + 3);
+        this.ctx.textAlign = 'left';
+      }
+    }
+
     // Render all voroboids
     for (const voroboid of this.voroboids) {
       this.renderVoroboid(voroboid);
+
+      // DEBUG: Draw voroboid position and velocity
+      if (this.debug) {
+        // Position - small magenta dot
+        this.ctx.fillStyle = '#ff00ff';
+        this.ctx.beginPath();
+        this.ctx.arc(voroboid.position.x, voroboid.position.y, 4, 0, Math.PI * 2);
+        this.ctx.fill();
+
+        // Velocity vector - magenta line
+        this.ctx.strokeStyle = '#ff00ff';
+        this.ctx.lineWidth = 2;
+        this.ctx.beginPath();
+        this.ctx.moveTo(voroboid.position.x, voroboid.position.y);
+        this.ctx.lineTo(
+          voroboid.position.x + voroboid.velocity.x * 10,
+          voroboid.position.y + voroboid.velocity.y * 10
+        );
+        this.ctx.stroke();
+      }
     }
 
     // Render container walls on top
