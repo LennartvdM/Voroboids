@@ -105,7 +105,8 @@ export class Voroboid {
   ): void {
     let force = vec2(0, 0);
 
-    // FORCE 1: Repulsion from neighbors - spread out!
+    // FORCE 1: Repulsion from neighbors - this IS the spreading force
+    // Linear falloff so it's effective at medium distances
     for (const neighbor of neighbors) {
       if (neighbor.id === this.id) continue;
 
@@ -113,8 +114,9 @@ export class Voroboid {
       const dist = magnitude(diff);
 
       if (dist > 0 && dist < PHYSICS.REPULSION_RANGE) {
-        // Inverse square falloff - stronger when close
-        const strength = PHYSICS.REPULSION_STRENGTH * Math.pow(1 - dist / PHYSICS.REPULSION_RANGE, 2);
+        // Linear falloff - stays strong at medium distances
+        const t = 1 - dist / PHYSICS.REPULSION_RANGE;
+        const strength = PHYSICS.REPULSION_STRENGTH * t;
         force = add(force, mul(normalize(diff), strength));
       }
     }
@@ -130,20 +132,8 @@ export class Voroboid {
         if (dist > 1) {
           force = add(force, mul(normalize(toOpening), PHYSICS.SEEK_STRENGTH));
         }
-      } else {
-        // Inside: spread toward edges (fill the container)
-        const bounds = targetInfo.bounds;
-        const centerX = bounds.x + bounds.width / 2;
-        const centerY = bounds.y + bounds.height / 2;
-
-        // Push away from center toward edges
-        const fromCenter = sub(this.position, vec2(centerX, centerY));
-        const distFromCenter = magnitude(fromCenter);
-        if (distFromCenter > 1) {
-          // Gentle outward push
-          force = add(force, mul(normalize(fromCenter), PHYSICS.SPREAD_STRENGTH * 0.5));
-        }
       }
+      // Inside: repulsion from neighbors handles spreading - no center-based force needed
     }
 
     // FORCE 3: Wall avoidance
@@ -316,7 +306,7 @@ export class Voroboid {
     this.targetArea = Math.PI * this.blobRadius * this.blobRadius * this.weight;
   }
 
-  // Collision resolution - push apart and add velocity
+  // Collision resolution - hard push when too close
   static resolveCollisions(voroboids: Voroboid[]): void {
     const minDist = PHYSICS.MIN_DIST;
 
@@ -332,13 +322,13 @@ export class Voroboid {
           const overlap = minDist - dist;
           const pushDir = normalize(diff);
 
-          // Position correction
-          const fix = mul(pushDir, overlap * 0.5);
+          // Position correction - full separation
+          const fix = mul(pushDir, overlap * 0.6);
           a.position = add(a.position, fix);
           b.position = sub(b.position, fix);
 
-          // Add push velocity - they bounce apart
-          const pushVel = mul(pushDir, overlap * 0.15);
+          // Add push velocity - strong bounce apart
+          const pushVel = mul(pushDir, PHYSICS.COLLISION_PUSH);
           a.velocity = add(a.velocity, pushVel);
           b.velocity = sub(b.velocity, pushVel);
         }
