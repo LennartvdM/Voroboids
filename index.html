@@ -31,12 +31,14 @@
       }
       .world-container {
         position: relative;
+        overflow: visible;
       }
       #world-canvas {
         position: absolute;
         top: 0;
         left: 0;
         pointer-events: none;
+        background: rgba(255, 0, 0, 0.1);  /* DEBUG: faint red to see canvas bounds */
       }
       .demo-area {
         display: flex;
