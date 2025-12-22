@@ -20,6 +20,9 @@ export class VoroboidsSystem {
   private lastTime: number = 0;
   private animationId: number | null = null;
 
+  // Magnet shift state - when true, voroboids are attracted to the other container's magnet
+  private magnetsShifted: boolean = false;
+
   constructor(
     worldCanvas: HTMLCanvasElement,
     worldContainer: HTMLElement,
@@ -166,33 +169,49 @@ export class VoroboidsSystem {
     return nearestContainer;
   }
 
-  // Find the container a voroboid is in and return its magnet
+  // Find the container a voroboid is in and return the appropriate magnet
+  // When magnetsShifted is true, return the OTHER container's magnet to pull voroboids through
   private getMagnetForVoroboid(voroboid: Voroboid): MagnetConfig | undefined {
+    // Find current container
+    let currentContainer: Container | undefined;
     for (const container of this.containers.values()) {
       if (container.containsPoint(voroboid.position)) {
-        return container.getMagnet();
+        currentContainer = container;
+        break;
       }
     }
+
     // If not in any container, find the nearest one
-    // This helps voroboids that are transitioning between containers
-    let nearestContainer: Container | undefined;
-    let minDist = Infinity;
+    if (!currentContainer) {
+      let minDist = Infinity;
+      for (const container of this.containers.values()) {
+        const bounds = container.getBounds();
+        const centerX = bounds.x + bounds.width / 2;
+        const centerY = bounds.y + bounds.height / 2;
+        const dx = voroboid.position.x - centerX;
+        const dy = voroboid.position.y - centerY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
 
-    for (const container of this.containers.values()) {
-      const bounds = container.getBounds();
-      const centerX = bounds.x + bounds.width / 2;
-      const centerY = bounds.y + bounds.height / 2;
-      const dx = voroboid.position.x - centerX;
-      const dy = voroboid.position.y - centerY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < minDist) {
-        minDist = dist;
-        nearestContainer = container;
+        if (dist < minDist) {
+          minDist = dist;
+          currentContainer = container;
+        }
       }
     }
 
-    return nearestContainer?.getMagnet();
+    if (!currentContainer) return undefined;
+
+    // When magnets are shifted, attract voroboids to the other container
+    if (this.magnetsShifted) {
+      // Find the other container and return its magnet
+      for (const container of this.containers.values()) {
+        if (container !== currentContainer) {
+          return container.getMagnet();
+        }
+      }
+    }
+
+    return currentContainer.getMagnet();
   }
 
   private render(): void {
@@ -516,6 +535,17 @@ export class VoroboidsSystem {
     if (container) {
       container.rotateOpening();
     }
+  }
+
+  // Shift magnets - toggle attraction to the other container
+  // This causes voroboids to flow through the opening to the other side
+  shiftMagnets(): void {
+    this.magnetsShifted = !this.magnetsShifted;
+  }
+
+  // Check if magnets are currently shifted
+  areMagnetsShifted(): boolean {
+    return this.magnetsShifted;
   }
 
   // Get voroboids

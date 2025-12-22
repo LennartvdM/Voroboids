@@ -49,6 +49,7 @@ system.start();
 const resetBtn = document.getElementById('reset') as HTMLButtonElement;
 const rotateABtn = document.getElementById('rotate-a') as HTMLButtonElement;
 const rotateBBtn = document.getElementById('rotate-b') as HTMLButtonElement;
+const shiftMagnetsBtn = document.getElementById('shift-magnets') as HTMLButtonElement;
 
 resetBtn?.addEventListener('click', () => {
   system.initializeVoroboids('a', voroboidConfigs);
@@ -60,6 +61,13 @@ rotateABtn?.addEventListener('click', () => {
 
 rotateBBtn?.addEventListener('click', () => {
   system.rotateContainer('b');
+});
+
+shiftMagnetsBtn?.addEventListener('click', () => {
+  system.shiftMagnets();
+  // Update button text to show current state
+  const shifted = system.areMagnetsShifted();
+  shiftMagnetsBtn.textContent = shifted ? 'Shift Magnets ⇆' : 'Shift Magnets ⇄';
 });
 
 // Handle window resize
