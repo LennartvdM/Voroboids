@@ -132,13 +132,90 @@ export class VoroboidsSystem {
   // Compute Voronoi-like polygons for all voroboids
   private computePolygons(): void {
     for (const voroboid of this.voroboids) {
-      // Find which container this voroboid is in
-      const container = this.getContainerForVoroboid(voroboid);
-      if (container) {
-        const bounds = container.getBounds();
+      // Get appropriate bounds for this voroboid
+      // Uses combined bounds if the voroboid is transitioning between containers
+      const bounds = this.getBoundsForVoroboid(voroboid);
+      if (bounds) {
         voroboid.computePolygon(this.voroboids, bounds);
       }
     }
+  }
+
+  // Get appropriate bounds for a voroboid
+  // Returns combined bounds if the voroboid is in the transition zone between containers
+  private getBoundsForVoroboid(voroboid: Voroboid): { x: number; y: number; width: number; height: number } | undefined {
+    const containers = Array.from(this.containers.values());
+    if (containers.length < 2) {
+      const container = this.getContainerForVoroboid(voroboid);
+      return container?.getBounds();
+    }
+
+    // Check if voroboid is inside any container
+    let insideContainer: Container | undefined;
+    for (const container of containers) {
+      if (container.containsPoint(voroboid.position)) {
+        insideContainer = container;
+        break;
+      }
+    }
+
+    // If clearly inside a container, check if it's near the opening (transition zone)
+    if (insideContainer) {
+      const bounds = insideContainer.getBounds();
+      const transitionMargin = voroboid.blobRadius * 2;
+
+      // Check if near the opening side
+      const isNearOpening = this.isNearOpening(voroboid.position, insideContainer, transitionMargin);
+
+      if (isNearOpening) {
+        // Use combined bounds of both containers for smooth transition
+        return this.getCombinedBounds();
+      }
+
+      return bounds;
+    }
+
+    // Voroboid is between containers - use combined bounds
+    return this.getCombinedBounds();
+  }
+
+  // Check if a position is near the opening of a container
+  private isNearOpening(position: Vec2, container: Container, margin: number): boolean {
+    const bounds = container.getBounds();
+
+    switch (container.opening) {
+      case 'right':
+        return position.x > bounds.x + bounds.width - margin;
+      case 'left':
+        return position.x < bounds.x + margin;
+      case 'bottom':
+        return position.y > bounds.y + bounds.height - margin;
+      case 'top':
+        return position.y < bounds.y + margin;
+      default:
+        return false;
+    }
+  }
+
+  // Get combined bounds spanning all containers
+  private getCombinedBounds(): { x: number; y: number; width: number; height: number } {
+    let minX = Infinity, minY = Infinity;
+    let maxX = -Infinity, maxY = -Infinity;
+
+    for (const container of this.containers.values()) {
+      const bounds = container.getBounds();
+      minX = Math.min(minX, bounds.x);
+      minY = Math.min(minY, bounds.y);
+      maxX = Math.max(maxX, bounds.x + bounds.width);
+      maxY = Math.max(maxY, bounds.y + bounds.height);
+    }
+
+    return {
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+    };
   }
 
   // Find which container a voroboid is in

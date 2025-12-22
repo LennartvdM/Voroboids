@@ -388,9 +388,22 @@ export class Voroboid {
 
   // Smooth polygon vertices over time for fluid animation
   private smoothPolygon(target: Vec2[]): Vec2[] {
-    // If no previous polygon or vertex count changed, use target directly
-    if (this.polygon.length === 0 || this.polygon.length !== target.length) {
+    // If no previous polygon, use target directly
+    if (this.polygon.length === 0) {
       return target.map(p => ({ ...p }));
+    }
+
+    // If vertex count changed, resample to match and then interpolate
+    // This prevents jarring snaps during container transitions
+    if (this.polygon.length !== target.length) {
+      const resampled = this.resamplePolygon(this.polygon, target.length);
+      const smoothed: Vec2[] = [];
+      // Use faster interpolation during transitions
+      const transitionFactor = this.smoothingFactor * 2;
+      for (let i = 0; i < target.length; i++) {
+        smoothed.push(lerpVec2(resampled[i], target[i], transitionFactor));
+      }
+      return smoothed;
     }
 
     // Interpolate each vertex toward target
@@ -400,6 +413,60 @@ export class Voroboid {
     }
 
     return smoothed;
+  }
+
+  // Resample a polygon to have a different number of vertices
+  // Uses linear interpolation along the polygon perimeter
+  private resamplePolygon(polygon: Vec2[], targetCount: number): Vec2[] {
+    if (polygon.length === 0 || targetCount < 3) {
+      return polygon;
+    }
+
+    // Calculate total perimeter length and segment lengths
+    const segments: { start: Vec2; length: number; cumulative: number }[] = [];
+    let totalLength = 0;
+
+    for (let i = 0; i < polygon.length; i++) {
+      const start = polygon[i];
+      const end = polygon[(i + 1) % polygon.length];
+      const length = magnitude(sub(end, start));
+      segments.push({ start, length, cumulative: totalLength });
+      totalLength += length;
+    }
+
+    if (totalLength === 0) {
+      // Degenerate polygon - all points at same location
+      return Array(targetCount).fill(null).map(() => ({ ...polygon[0] }));
+    }
+
+    // Sample points at equal intervals along the perimeter
+    const result: Vec2[] = [];
+    const step = totalLength / targetCount;
+
+    for (let i = 0; i < targetCount; i++) {
+      const targetDist = i * step;
+
+      // Find which segment this distance falls into
+      let segIdx = 0;
+      for (let j = segments.length - 1; j >= 0; j--) {
+        if (segments[j].cumulative <= targetDist) {
+          segIdx = j;
+          break;
+        }
+      }
+
+      const seg = segments[segIdx];
+      const segStart = seg.start;
+      const segEnd = polygon[(segIdx + 1) % polygon.length];
+
+      // Interpolate within segment
+      const distIntoSeg = targetDist - seg.cumulative;
+      const t = seg.length > 0 ? distIntoSeg / seg.length : 0;
+
+      result.push(lerpVec2(segStart, segEnd, Math.min(1, Math.max(0, t))));
+    }
+
+    return result;
   }
 
   // Fallback polygon when computation fails
