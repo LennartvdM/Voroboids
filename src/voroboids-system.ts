@@ -349,7 +349,7 @@ export class VoroboidsSystem {
     for (const voroboid of this.voroboids) {
       this.renderVoroboid(voroboid);
 
-      // DEBUG: Draw voroboid position and velocity
+      // DEBUG: Draw voroboid position, velocity, weight, and pressure
       if (this.debug) {
         // Position - small magenta dot
         this.ctx.fillStyle = '#ff00ff';
@@ -367,6 +367,34 @@ export class VoroboidsSystem {
           voroboid.position.y + voroboid.velocity.y * 10
         );
         this.ctx.stroke();
+
+        // Weight and Pressure labels - show the bottom-up negotiation state
+        this.ctx.font = 'bold 11px monospace';
+        this.ctx.textAlign = 'center';
+
+        // Weight label (w:) - the cell's claim on space
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillText(
+          `w:${voroboid.weight.toFixed(1)}`,
+          voroboid.position.x,
+          voroboid.position.y - 12
+        );
+
+        // Pressure label (p:) - compression feedback
+        // Color-coded: green = relaxed, yellow = normal, red = compressed
+        const pressure = voroboid.pressure;
+        let pressureColor = '#88ff88'; // green - relaxed
+        if (pressure > 1.2) pressureColor = '#ff8888'; // red - compressed
+        else if (pressure > 0.8) pressureColor = '#ffff88'; // yellow - normal
+
+        this.ctx.fillStyle = pressureColor;
+        this.ctx.fillText(
+          `p:${pressure.toFixed(2)}`,
+          voroboid.position.x,
+          voroboid.position.y + 18
+        );
+
+        this.ctx.textAlign = 'left';
       }
     }
 
@@ -749,6 +777,12 @@ export class VoroboidsSystem {
   // Get a container by ID
   getContainer(id: string): Container | undefined {
     return this.containers.get(id);
+  }
+
+  // Toggle debug visualization
+  toggleDebug(): boolean {
+    this.debug = !this.debug;
+    return this.debug;
   }
 }
 
