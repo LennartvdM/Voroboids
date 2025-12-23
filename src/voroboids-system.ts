@@ -3,7 +3,7 @@
 
 import type { Vec2, VoroboidConfig, FlockConfig, Wall, MagnetConfig, WallPolarity } from './types';
 import { DEFAULT_FLOCK_CONFIG } from './types';
-import { Voroboid, TargetContainerInfo } from './voroboid';
+import { Voroboid, TargetContainerInfo, ContainerBounds } from './voroboid';
 import { Container } from './container';
 import { vec2, add, sub, mul, magnitude, normalize, insetPolygon } from './math';
 
@@ -97,6 +97,32 @@ export class VoroboidsSystem {
 
       this.voroboids.push(voroboid);
     }
+
+    // Run settling iterations to spread cells before first render
+    // This is still bottom-up - cells negotiate their own positions through physics
+    // We're just accelerating the initial settling so the first frame looks good
+    this.settleVoroboids(50);
+  }
+
+  // Run physics updates without rendering to let cells settle
+  private settleVoroboids(iterations: number): void {
+    const allWalls = this.getAllWalls();
+    const dt = 16; // ~60fps timestep
+
+    for (let i = 0; i < iterations; i++) {
+      // Update physics
+      for (const voroboid of this.voroboids) {
+        const targetInfo = this.getTargetContainerInfo(voroboid);
+        const magnet = this.getMagnetForVoroboid(voroboid);
+        voroboid.update(dt, this.voroboids, allWalls, this.config, magnet, targetInfo);
+      }
+
+      // Resolve collisions
+      Voroboid.resolveCollisions(this.voroboids);
+
+      // Compute polygons (needed for pressure feedback)
+      this.computePolygons();
+    }
   }
 
   // Collect all walls from all containers
@@ -170,17 +196,32 @@ export class VoroboidsSystem {
   }
 
   // Compute Voronoi-like polygons for all voroboids
-  // Each voroboid clips against walls and neighbors, starting from its container bounds
+  // Each voroboid clips against walls and neighbors, starting from its CURRENT container bounds
+  // (based on physical position, not target - so cells don't shrink during transit)
   private computePolygons(): void {
     const allWalls = this.getAllWalls();
 
     for (const voroboid of this.voroboids) {
-      // Get the container bounds for this voroboid
-      const container = this.containers.get(voroboid.targetContainerId);
-      const containerBounds = container ? container.getBounds() : undefined;
+      // Find which container the voroboid is actually IN based on position
+      // This prevents cells from shrinking during transit between containers
+      const containerBounds = this.getContainerBoundsForPosition(voroboid.position);
 
       voroboid.computePolygon(this.voroboids, allWalls, containerBounds);
     }
+  }
+
+  // Find container bounds based on physical position (not target)
+  // Returns the bounds of whichever container contains the position
+  private getContainerBoundsForPosition(position: Vec2): ContainerBounds | undefined {
+    for (const container of this.containers.values()) {
+      const bounds = container.getBounds();
+      if (position.x >= bounds.x && position.x <= bounds.x + bounds.width &&
+          position.y >= bounds.y && position.y <= bounds.y + bounds.height) {
+        return bounds;
+      }
+    }
+    // If not in any container, return undefined (will use fallback rectangle)
+    return undefined;
   }
 
   // Get the magnet configuration for a voroboid based on its position
