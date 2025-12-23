@@ -5,7 +5,7 @@ import type { Vec2, Wall, VoroboidConfig, FlockConfig, MagnetConfig, VoroboidCon
 import { PHYSICS } from './types';
 import {
   vec2, add, sub, mul, normalize, magnitude, lerpVec2, dot, pointToSegment,
-  clipPolygonByPlane, polygonArea as computePolygonArea, circleToPolygon
+  clipPolygonByPlane, polygonArea as computePolygonArea, rectToPolygon
 } from './math';
 
 // Container bounds for containment checks
@@ -257,11 +257,31 @@ export class Voroboid {
     return points;
   }
 
-  // Compute Voronoi-like polygon by clipping a circle against walls and neighbor bisectors
-  // The cell knows only about walls and neighbors - no container bounds
-  computePolygon(neighbors: Voroboid[], walls: Wall[]): void {
-    // Start with a large circle around the centroid
-    let polygon = circleToPolygon(this.position, this.blobRadius * 4, 24);
+  // Compute Voronoi-like polygon by clipping container bounds against walls and neighbor bisectors
+  // Start with the full container to ensure corners are filled, then clip down
+  computePolygon(neighbors: Voroboid[], walls: Wall[], containerBounds?: ContainerBounds): void {
+    // Start with the container rectangle - this ensures we can fill all the way to corners
+    // If no bounds provided, fall back to a large area around the voroboid
+    let polygon: Vec2[];
+    if (containerBounds) {
+      // Use container bounds with some padding to ensure full coverage
+      const padding = 10;
+      polygon = rectToPolygon(
+        containerBounds.x - padding,
+        containerBounds.y - padding,
+        containerBounds.width + padding * 2,
+        containerBounds.height + padding * 2
+      );
+    } else {
+      // Fallback: large rectangle centered on voroboid
+      const size = this.blobRadius * 8;
+      polygon = rectToPolygon(
+        this.position.x - size,
+        this.position.y - size,
+        size * 2,
+        size * 2
+      );
+    }
 
     // Clip against all walls - cells squeeze through openings because openings have no walls
     for (const wall of walls) {
@@ -286,6 +306,8 @@ export class Voroboid {
     }
 
     // Clip against each neighbor's bisector
+    // Use deterministic bisector computation to prevent overlaps:
+    // Always compute from the perspective of the lower-ID cell
     for (const neighbor of neighbors) {
       if (neighbor.id === this.id) continue;
 
@@ -293,26 +315,35 @@ export class Voroboid {
       const dist = magnitude(sub(this.position, neighbor.position));
       if (dist > this.blobRadius * 6) continue;
 
+      // Deterministic bisector: always compute from lower-ID cell's perspective
+      // This ensures both cells get the EXACT same bisector line
+      const isLowerID = this.id < neighbor.id;
+      const cellA = isLowerID ? this : neighbor;
+      const cellB = isLowerID ? neighbor : this;
+
       // Compute bisector position based on WEIGHT ratio (claim on space)
       // Weight determines how much territory each cell "deserves"
-      // This is the core of bottom-up negotiation - weight is your inherent claim
-      const weightRatio = this.weight / (this.weight + neighbor.weight);
+      const weightRatioA = cellA.weight / (cellA.weight + cellB.weight);
 
       // Pressure provides a secondary adjustment - compressed cells push a bit harder
-      const myPressure = Math.max(0.1, this.pressure);
-      const theirPressure = Math.max(0.1, neighbor.pressure);
-      const pressureAdjust = (myPressure / (myPressure + theirPressure)) - 0.5;
+      const pressureA = Math.max(0.1, cellA.pressure);
+      const pressureB = Math.max(0.1, cellB.pressure);
+      const pressureAdjustA = (pressureA / (pressureA + pressureB)) - 0.5;
 
       // Combined ratio: weight is primary (80%), pressure is secondary (20%)
-      const combinedRatio = weightRatio + pressureAdjust * 0.2;
+      const combinedRatioA = weightRatioA + pressureAdjustA * 0.2;
 
-      // Bisector point: lerp from this position to neighbor position
-      // ratio > 0.5 means we claim more space, bisector shifts toward neighbor
-      const bisectorPoint = lerpVec2(this.position, neighbor.position, combinedRatio);
+      // Bisector point: lerp from A to B
+      const bisectorPoint = lerpVec2(cellA.position, cellB.position, combinedRatioA);
 
-      // Bisector normal points from this toward neighbor
-      const toNeighbor = sub(neighbor.position, this.position);
-      const bisectorNormal = normalize(toNeighbor);
+      // Bisector normal: always from A toward B
+      const aToB = sub(cellB.position, cellA.position);
+      const bisectorNormalAtoB = normalize(aToB);
+
+      // For THIS cell, determine which side to keep:
+      // - If we're cellA (lower ID), we keep the side OPPOSITE to the normal (our side)
+      // - If we're cellB (higher ID), we keep the side WITH the normal (their side from A)
+      const bisectorNormal = isLowerID ? bisectorNormalAtoB : mul(bisectorNormalAtoB, -1);
 
       // Clip polygon - keep the half on our side
       polygon = clipPolygonByPlane(polygon, bisectorPoint, bisectorNormal);
