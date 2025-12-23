@@ -27,14 +27,22 @@ const containerB = document.getElementById('container-b') as HTMLElement;
 system.registerContainer('a', containerA, 'right');
 system.registerContainer('b', containerB, 'left');
 
-// Create voroboid configurations
+// Create voroboid configurations with VARIED WEIGHTS
+// This demonstrates bottom-up pressure negotiation:
+// - Heavier cells claim more territory (weight-based bisectors)
+// - Compressed cells push harder (pressure-driven forces)
+// - Weight determines collision response (heavier cells move less)
 const numVoroboids = 8;
 const colors = generateColors(numVoroboids);
+
+// Create cells with deliberately varied weights to show the negotiation
+// Some big ones (weight 2.0), some small ones (weight 0.5), some medium (weight 1.0)
+const weights = [2.0, 0.5, 1.5, 0.6, 1.8, 0.7, 1.2, 0.8];
 
 const voroboidConfigs: VoroboidConfig[] = colors.map((color, i) => ({
   id: i,
   color,
-  weight: 0.8 + Math.random() * 0.4,
+  weight: weights[i % weights.length],
 }));
 
 // Initialize voroboids in container A
@@ -78,4 +86,14 @@ window.addEventListener('resize', () => {
   system.updateContainerPositions();
 });
 
-console.log('Voroboids initialized. They flow naturally through openings!');
+// Keyboard controls
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'd' || e.key === 'D') {
+    const isDebug = system.toggleDebug();
+    console.log(`Debug mode: ${isDebug ? 'ON' : 'OFF'}`);
+    console.log('Debug shows: w = weight (claim on space), p = pressure (compression feedback)');
+  }
+});
+
+console.log('Voroboids initialized with bottom-up pressure negotiation!');
+console.log('Press D to toggle debug mode (shows weight & pressure)');

@@ -105,8 +105,8 @@ export class Voroboid {
   ): void {
     let force = vec2(0, 0);
 
-    // FORCE 1: Repulsion from neighbors - this IS the spreading force
-    // Linear falloff so it's effective at medium distances
+    // FORCE 1: Pressure-driven repulsion from neighbors
+    // High-pressure cells push harder - they're fighting for their fair share
     for (const neighbor of neighbors) {
       if (neighbor.id === this.id) continue;
 
@@ -116,7 +116,16 @@ export class Voroboid {
       if (dist > 0 && dist < PHYSICS.REPULSION_RANGE) {
         // Linear falloff - stays strong at medium distances
         const t = 1 - dist / PHYSICS.REPULSION_RANGE;
-        const strength = PHYSICS.REPULSION_STRENGTH * t;
+
+        // Pressure-driven: compressed cells push harder
+        // My pressure > 1 means I'm compressed and need to expand
+        const myPressureFactor = 1 + (this.pressure - 1) * 0.4;
+        // Their pressure affects how much they push back
+        const theirPressureFactor = 1 + (neighbor.pressure - 1) * 0.4;
+        // Net pressure differential - I push harder if I'm more compressed
+        const pressureDiff = myPressureFactor / theirPressureFactor;
+
+        const strength = PHYSICS.REPULSION_STRENGTH * t * pressureDiff;
         force = add(force, mul(normalize(diff), strength));
       }
     }
@@ -248,15 +257,22 @@ export class Voroboid {
       const dist = magnitude(sub(this.position, neighbor.position));
       if (dist > this.blobRadius * 6) continue;
 
-      // Compute bisector position based on pressure ratio
-      // Higher pressure pushes the bisector toward the neighbor
+      // Compute bisector position based on WEIGHT ratio (claim on space)
+      // Weight determines how much territory each cell "deserves"
+      // This is the core of bottom-up negotiation - weight is your inherent claim
+      const weightRatio = this.weight / (this.weight + neighbor.weight);
+
+      // Pressure provides a secondary adjustment - compressed cells push a bit harder
       const myPressure = Math.max(0.1, this.pressure);
       const theirPressure = Math.max(0.1, neighbor.pressure);
-      const pressureRatio = myPressure / (myPressure + theirPressure);
+      const pressureAdjust = (myPressure / (myPressure + theirPressure)) - 0.5;
+
+      // Combined ratio: weight is primary (80%), pressure is secondary (20%)
+      const combinedRatio = weightRatio + pressureAdjust * 0.2;
 
       // Bisector point: lerp from this position to neighbor position
-      // pressureRatio > 0.5 means we have more pressure, bisector shifts toward neighbor
-      const bisectorPoint = lerpVec2(this.position, neighbor.position, pressureRatio);
+      // ratio > 0.5 means we claim more space, bisector shifts toward neighbor
+      const bisectorPoint = lerpVec2(this.position, neighbor.position, combinedRatio);
 
       // Bisector normal points from this toward neighbor
       const toNeighbor = sub(neighbor.position, this.position);
@@ -306,7 +322,8 @@ export class Voroboid {
     this.targetArea = Math.PI * this.blobRadius * this.blobRadius * this.weight;
   }
 
-  // Collision resolution - hard push when too close
+  // Collision resolution - weight-based push when too close
+  // Heavier cells move less, lighter cells get pushed more
   static resolveCollisions(voroboids: Voroboid[]): void {
     const minDist = PHYSICS.MIN_DIST;
 
@@ -322,15 +339,18 @@ export class Voroboid {
           const overlap = minDist - dist;
           const pushDir = normalize(diff);
 
-          // Position correction - full separation
-          const fix = mul(pushDir, overlap * 0.6);
-          a.position = add(a.position, fix);
-          b.position = sub(b.position, fix);
+          // Weight-based separation: heavier cells move less
+          const totalWeight = a.weight + b.weight;
+          const aRatio = b.weight / totalWeight; // B's weight determines how much A moves
+          const bRatio = a.weight / totalWeight; // A's weight determines how much B moves
 
-          // Add push velocity - strong bounce apart
-          const pushVel = mul(pushDir, PHYSICS.COLLISION_PUSH);
-          a.velocity = add(a.velocity, pushVel);
-          b.velocity = sub(b.velocity, pushVel);
+          // Position correction - weighted separation
+          a.position = add(a.position, mul(pushDir, overlap * 0.6 * aRatio));
+          b.position = sub(b.position, mul(pushDir, overlap * 0.6 * bRatio));
+
+          // Velocity push - also weight-based
+          a.velocity = add(a.velocity, mul(pushDir, PHYSICS.COLLISION_PUSH * aRatio));
+          b.velocity = sub(b.velocity, mul(pushDir, PHYSICS.COLLISION_PUSH * bRatio));
         }
       }
     }
