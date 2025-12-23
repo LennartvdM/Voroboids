@@ -1,5 +1,5 @@
 // Voroboids - Entry Point
-// Organisms that flow naturally through openings
+// Maxwell's Demon containers with directional walls
 
 import { VoroboidsSystem, generateColors } from './voroboids-system';
 import type { VoroboidConfig } from './types';
@@ -9,34 +9,29 @@ const worldCanvas = document.getElementById('world-canvas') as HTMLCanvasElement
 const worldContainer = document.querySelector('.demo-area') as HTMLElement;
 
 // Initialize the system with world canvas
-// Water balloon physics: gravity dominates, high damping, collision is reactive
 const system = new VoroboidsSystem(worldCanvas, worldContainer, {
-  maxSpeed: 4,                 // Slower - water balloons are sluggish
+  maxSpeed: 4,
   blobRadius: 25,
   wallRepulsionRange: 60,
   wallRepulsionStrength: 2.5,
-  damping: 0.4,                // HEAVY damping - water balloons don't bounce
-  gravityStrength: 3.0,        // STRONG gravity - primary force
+  damping: 0.4,
+  gravityStrength: 3.0,
 });
 
 // Get container elements (divs, not canvases)
 const containerA = document.getElementById('container-a') as HTMLElement;
 const containerB = document.getElementById('container-b') as HTMLElement;
 
-// Register containers - their openings face each other
-system.registerContainer('a', containerA, 'right');
-system.registerContainer('b', containerB, 'left');
+// Register containers with Maxwell's Demon walls
+// Container A starts with inward polarity (trapping), B starts with solid
+system.registerContainer('a', containerA, 'inward');
+system.registerContainer('b', containerB, 'solid');
 
 // Create voroboid configurations with VARIED WEIGHTS
-// This demonstrates bottom-up pressure negotiation:
-// - Heavier cells claim more territory (weight-based bisectors)
-// - Compressed cells push harder (pressure-driven forces)
-// - Weight determines collision response (heavier cells move less)
 const numVoroboids = 8;
 const colors = generateColors(numVoroboids);
 
 // Create cells with deliberately varied weights to show the negotiation
-// Some big ones (weight 2.0), some small ones (weight 0.5), some medium (weight 1.0)
 const weights = [2.0, 0.5, 1.5, 0.6, 1.8, 0.7, 1.2, 0.8];
 
 const voroboidConfigs: VoroboidConfig[] = colors.map((color, i) => ({
@@ -53,33 +48,23 @@ system.start();
 
 // Set up controls
 const resetBtn = document.getElementById('reset') as HTMLButtonElement;
-const rotateABtn = document.getElementById('rotate-a') as HTMLButtonElement;
-const rotateBBtn = document.getElementById('rotate-b') as HTMLButtonElement;
-const shiftMagnetsBtn = document.getElementById('shift-magnets') as HTMLButtonElement;
+const pourABtn = document.getElementById('pour-a') as HTMLButtonElement;
+const pourBBtn = document.getElementById('pour-b') as HTMLButtonElement;
 
 resetBtn?.addEventListener('click', () => {
+  // Reset to initial state: A trapping, B solid
+  system.getContainer('a')?.setPolarity('inward');
+  system.getContainer('b')?.setPolarity('solid');
   system.initializeVoroboids('a', voroboidConfigs);
 });
 
-rotateABtn?.addEventListener('click', () => {
-  system.rotateContainer('a');
+pourABtn?.addEventListener('click', () => {
+  system.pourTo('a');
 });
 
-rotateBBtn?.addEventListener('click', () => {
-  system.rotateContainer('b');
+pourBBtn?.addEventListener('click', () => {
+  system.pourTo('b');
 });
-
-shiftMagnetsBtn?.addEventListener('click', () => {
-  system.shiftMagnets();
-  // Update button text to show which bucket's magnet is active
-  const active = system.getActiveMagnetContainer();
-  shiftMagnetsBtn.textContent = `Magnet: Bucket ${active.toUpperCase()}`;
-});
-
-// Set initial button text
-if (shiftMagnetsBtn) {
-  shiftMagnetsBtn.textContent = `Magnet: Bucket ${system.getActiveMagnetContainer().toUpperCase()}`;
-}
 
 // Handle window resize
 window.addEventListener('resize', () => {
@@ -95,5 +80,6 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-console.log('Voroboids initialized with bottom-up pressure negotiation!');
-console.log('Press D to toggle debug mode (shows weight & pressure)');
+console.log('Voroboids - Maxwell\'s Demon containers!');
+console.log('Walls are directional membranes: inward (purple) traps, outward (teal) releases');
+console.log('Press D to toggle debug mode');

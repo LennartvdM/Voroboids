@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Voroboids - Voronoi Boids</title>
+    <title>Voroboids - Maxwell's Demon</title>
     <style>
       * {
         margin: 0;
@@ -56,10 +56,6 @@
         letter-spacing: 0.1em;
         color: #555;
       }
-      .rotate-btn {
-        padding: 8px 16px;
-        font-size: 0.75rem;
-      }
       .container-box {
         width: 300px;
         height: 400px;
@@ -90,6 +86,23 @@
       button:active {
         transform: translateY(0);
       }
+      .pour-btn {
+        font-weight: bold;
+      }
+      .pour-btn.pour-a {
+        background: linear-gradient(135deg, #1a1a2e 0%, #2c1654 100%);
+        border-color: #9b59b6;
+      }
+      .pour-btn.pour-a:hover {
+        background: linear-gradient(135deg, #2a2a4e 0%, #3c2664 100%);
+      }
+      .pour-btn.pour-b {
+        background: linear-gradient(135deg, #1a1a2e 0%, #0d3d36 100%);
+        border-color: #1abc9c;
+      }
+      .pour-btn.pour-b:hover {
+        background: linear-gradient(135deg, #2a2a4e 0%, #1d4d46 100%);
+      }
       .info {
         font-size: 0.75rem;
         color: #444;
@@ -105,24 +118,23 @@
       <canvas id="world-canvas"></canvas>
       <div class="demo-area">
         <div class="container-wrapper">
-          <button id="rotate-a" class="rotate-btn">Rotate A ↻</button>
           <div id="container-a" class="container-box"></div>
           <span class="container-label">Container A</span>
         </div>
         <div class="container-wrapper">
-          <button id="rotate-b" class="rotate-btn">Rotate B ↻</button>
           <div id="container-b" class="container-box"></div>
           <span class="container-label">Container B</span>
         </div>
       </div>
     </div>
     <div class="controls">
-      <button id="shift-magnets">Shift Magnets ⇄</button>
+      <button id="pour-a" class="pour-btn pour-a">Pour to A</button>
+      <button id="pour-b" class="pour-btn pour-b">Pour to B</button>
       <button id="reset">Reset</button>
     </div>
     <p class="info">
-      Autonomous organisms that flow naturally through openings.
-      They follow simple local rules - no top-down control.
+      Maxwell's Demon containers - walls are directional membranes.
+      Purple walls trap (inward), teal walls release (outward).
     </p>
     <script type="module" src="/src/main.ts"></script>
   </body>

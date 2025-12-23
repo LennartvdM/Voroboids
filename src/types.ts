@@ -12,10 +12,20 @@ export interface BezierPath {
   end: Vec2;
 }
 
-// A wall is just a line segment that repels voroboids
+// Wall polarity - Maxwell's Demon style directional permeability
+// inward: blocks cells trying to escape, allows cells entering (trapping)
+// outward: blocks cells trying to enter, allows cells escaping (releasing)
+// solid: blocks all passage
+// permeable: allows all passage
+export type WallPolarity = 'inward' | 'outward' | 'solid' | 'permeable';
+
+// A wall is a line segment with directional permeability
 export interface Wall {
   start: Vec2;
   end: Vec2;
+  polarity: WallPolarity;
+  // Normal pointing INTO the container (used for polarity checks)
+  inwardNormal: Vec2;
 }
 
 // Content that a voroboid can display

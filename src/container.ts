@@ -1,10 +1,10 @@
-// Container - a region in world space that defines walls
-// Containers don't render - they just define geometry
+// Container - a Maxwell's Demon region with directional walls
+// All 4 walls are present, but their polarity determines permeability
+// inward = traps cells inside (they can enter but not leave)
+// outward = releases cells (they can leave but not enter)
 
-import type { Vec2, Wall, MagnetConfig } from './types';
+import type { Vec2, Wall, WallPolarity, MagnetConfig } from './types';
 import { vec2 } from './math';
-
-export type OpeningSide = 'top' | 'bottom' | 'left' | 'right';
 
 export class Container {
   // Position in world space (relative to world canvas origin)
@@ -16,18 +16,17 @@ export class Container {
   // DOM element for position tracking
   element: HTMLElement;
 
-  // Which side is open (no wall)
-  opening: OpeningSide;
+  // Current wall polarity for all walls
+  private wallPolarity: WallPolarity = 'inward';
 
-  // The actual wall segments (3 walls, gap on opening side)
+  // The actual wall segments (all 4 walls present)
   walls: Wall[] = [];
 
-  // Magnet - gravity attractor (opposite side of opening)
+  // Magnet - gravity attractor at center
   magnet: MagnetConfig;
 
-  constructor(element: HTMLElement, opening: OpeningSide) {
+  constructor(element: HTMLElement) {
     this.element = element;
-    this.opening = opening;
     this.width = element.offsetWidth;
     this.height = element.offsetHeight;
     this.magnet = {
@@ -37,35 +36,11 @@ export class Container {
     this.updateMagnet();
   }
 
-  // Update magnet position based on opening side
-  // Magnet is on the opposite side of the opening (gravity pulls toward it)
+  // Update magnet position to center of container
   private updateMagnet(): void {
     const centerX = this.worldX + this.width / 2;
     const centerY = this.worldY + this.height / 2;
-
-    // Magnet position is on the wall opposite to the opening
-    switch (this.opening) {
-      case 'top':
-        // Opening at top, magnet at bottom
-        this.magnet.position = vec2(centerX, this.worldY + this.height);
-        this.magnet.direction = vec2(0, 1);
-        break;
-      case 'bottom':
-        // Opening at bottom, magnet at top
-        this.magnet.position = vec2(centerX, this.worldY);
-        this.magnet.direction = vec2(0, -1);
-        break;
-      case 'left':
-        // Opening at left, magnet at right
-        this.magnet.position = vec2(this.worldX + this.width, centerY);
-        this.magnet.direction = vec2(1, 0);
-        break;
-      case 'right':
-        // Opening at right, magnet at left
-        this.magnet.position = vec2(this.worldX, centerY);
-        this.magnet.direction = vec2(-1, 0);
-        break;
-    }
+    this.magnet.position = vec2(centerX, centerY);
   }
 
   // Update position relative to a reference element (world container)
@@ -79,7 +54,7 @@ export class Container {
     this.updateMagnet();
   }
 
-  // Build wall segments based on opening side
+  // Build all 4 wall segments with current polarity
   rebuildWalls(): void {
     this.walls = [];
     const x = this.worldX;
@@ -87,28 +62,51 @@ export class Container {
     const w = this.width;
     const h = this.height;
 
-    // Add walls for closed sides
-    if (this.opening !== 'top') {
-      this.walls.push({ start: vec2(x, y), end: vec2(x + w, y) });
-    }
-    if (this.opening !== 'right') {
-      this.walls.push({ start: vec2(x + w, y), end: vec2(x + w, y + h) });
-    }
-    if (this.opening !== 'bottom') {
-      this.walls.push({ start: vec2(x + w, y + h), end: vec2(x, y + h) });
-    }
-    if (this.opening !== 'left') {
-      this.walls.push({ start: vec2(x, y + h), end: vec2(x, y) });
+    // Top wall - inward normal points down
+    this.walls.push({
+      start: vec2(x, y),
+      end: vec2(x + w, y),
+      polarity: this.wallPolarity,
+      inwardNormal: vec2(0, 1)
+    });
+
+    // Right wall - inward normal points left
+    this.walls.push({
+      start: vec2(x + w, y),
+      end: vec2(x + w, y + h),
+      polarity: this.wallPolarity,
+      inwardNormal: vec2(-1, 0)
+    });
+
+    // Bottom wall - inward normal points up
+    this.walls.push({
+      start: vec2(x + w, y + h),
+      end: vec2(x, y + h),
+      polarity: this.wallPolarity,
+      inwardNormal: vec2(0, -1)
+    });
+
+    // Left wall - inward normal points right
+    this.walls.push({
+      start: vec2(x, y + h),
+      end: vec2(x, y),
+      polarity: this.wallPolarity,
+      inwardNormal: vec2(1, 0)
+    });
+  }
+
+  // Set polarity for all walls
+  setPolarity(polarity: WallPolarity): void {
+    this.wallPolarity = polarity;
+    // Update existing walls
+    for (const wall of this.walls) {
+      wall.polarity = polarity;
     }
   }
 
-  // Rotate opening: right -> bottom -> left -> top -> right
-  rotateOpening(): void {
-    const sequence: OpeningSide[] = ['right', 'bottom', 'left', 'top'];
-    const currentIndex = sequence.indexOf(this.opening);
-    this.opening = sequence[(currentIndex + 1) % 4];
-    this.rebuildWalls();
-    this.updateMagnet();
+  // Get current polarity
+  getPolarity(): WallPolarity {
+    return this.wallPolarity;
   }
 
   // Get bounds for spawning voroboids inside
@@ -133,6 +131,14 @@ export class Container {
       point.x <= this.worldX + this.width &&
       point.y >= this.worldY &&
       point.y <= this.worldY + this.height
+    );
+  }
+
+  // Get the center of the container
+  getCenter(): Vec2 {
+    return vec2(
+      this.worldX + this.width / 2,
+      this.worldY + this.height / 2
     );
   }
 }
