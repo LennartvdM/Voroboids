@@ -308,12 +308,10 @@ export class Voroboid {
     // Clip against each neighbor's bisector
     // Use deterministic bisector computation to prevent overlaps:
     // Always compute from the perspective of the lower-ID cell
+    // IMPORTANT: Clip against ALL neighbors - with container bounds as starting polygon,
+    // distant cells can still overlap if they don't clip against each other
     for (const neighbor of neighbors) {
       if (neighbor.id === this.id) continue;
-
-      // Only consider neighbors within influence range
-      const dist = magnitude(sub(this.position, neighbor.position));
-      if (dist > this.blobRadius * 6) continue;
 
       // Deterministic bisector: always compute from lower-ID cell's perspective
       // This ensures both cells get the EXACT same bisector line
