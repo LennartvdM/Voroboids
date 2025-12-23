@@ -1,10 +1,10 @@
 // VoroboidsSystem - unified world with global rendering
 // All voroboids exist in world space, rendered on a single canvas
 
-import type { Vec2, VoroboidConfig, FlockConfig, Wall, MagnetConfig } from './types';
+import type { Vec2, VoroboidConfig, FlockConfig, Wall, MagnetConfig, WallPolarity } from './types';
 import { DEFAULT_FLOCK_CONFIG } from './types';
 import { Voroboid, TargetContainerInfo } from './voroboid';
-import { Container, OpeningSide } from './container';
+import { Container } from './container';
 import { vec2, add, sub, mul, magnitude, normalize, insetPolygon } from './math';
 
 export class VoroboidsSystem {
@@ -51,9 +51,10 @@ export class VoroboidsSystem {
     this.worldCanvas.style.top = `-${bleed}px`;
   }
 
-  // Register a container (region with walls)
-  registerContainer(id: string, element: HTMLElement, opening: OpeningSide): Container {
-    const container = new Container(element, opening);
+  // Register a container (Maxwell's Demon region with 4 walls)
+  registerContainer(id: string, element: HTMLElement, initialPolarity: WallPolarity = 'inward'): Container {
+    const container = new Container(element);
+    container.setPolarity(initialPolarity);
     this.containers.set(id, container);
     this.updateContainerPositions();
     return container;
@@ -155,7 +156,7 @@ export class VoroboidsSystem {
     if (!targetContainer) return undefined;
 
     const bounds = targetContainer.getBounds();
-    const opening = this.getOpeningCenter(targetContainer);
+    const center = targetContainer.getCenter();
 
     return {
       bounds: {
@@ -164,7 +165,7 @@ export class VoroboidsSystem {
         width: bounds.width,
         height: bounds.height
       },
-      opening
+      center
     };
   }
 
@@ -178,99 +179,15 @@ export class VoroboidsSystem {
     }
   }
 
-  // Find which container a voroboid is in
-  private getContainerForVoroboid(voroboid: Voroboid): Container | undefined {
-    for (const container of this.containers.values()) {
-      if (container.containsPoint(voroboid.position)) {
-        return container;
-      }
-    }
-    // Return nearest container if not inside any
-    let nearestContainer: Container | undefined;
-    let minDist = Infinity;
-
-    for (const container of this.containers.values()) {
-      const bounds = container.getBounds();
-      const centerX = bounds.x + bounds.width / 2;
-      const centerY = bounds.y + bounds.height / 2;
-      const dx = voroboid.position.x - centerX;
-      const dy = voroboid.position.y - centerY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-
-      if (dist < minDist) {
-        minDist = dist;
-        nearestContainer = container;
-      }
-    }
-
-    return nearestContainer;
-  }
-
   // Get the magnet configuration for a voroboid based on its position
-  // Voroboids inside their own container are pulled toward the active magnet
-  // Voroboids in a different container are guided toward that container's opening first
+  // With Maxwell's Demon walls, voroboids are always pulled toward target container center
   private getMagnetForVoroboid(voroboid: Voroboid): MagnetConfig | undefined {
-    const activeContainer = this.containers.get(this.activeMagnetContainer);
-    if (!activeContainer) return undefined;
+    const targetContainer = this.containers.get(voroboid.targetContainerId);
+    if (!targetContainer) return undefined;
 
-    // Find which container this voroboid is currently in
-    const currentContainer = this.getContainerForVoroboid(voroboid);
-
-    // If voroboid is in the active container, attract toward the magnet
-    if (currentContainer && this.getContainerIdFor(currentContainer) === this.activeMagnetContainer) {
-      return activeContainer.getMagnet();
-    }
-
-    // If voroboid is in a different container, guide it toward that container's opening
-    // by using a direction that points toward the opening
-    if (currentContainer) {
-      const openingDirection = this.getOpeningDirection(currentContainer);
-      return {
-        position: activeContainer.getMagnet().position,
-        direction: openingDirection,
-        strength: activeContainer.getMagnet().strength
-      };
-    }
-
-    // Voroboid is outside all containers - pull toward active container's opening
-    const openingCenter = this.getOpeningCenter(activeContainer);
-    return {
-      position: openingCenter,
-      strength: activeContainer.getMagnet().strength
-    };
-  }
-
-  // Get the container ID for a container instance
-  private getContainerIdFor(container: Container): string | undefined {
-    for (const [id, c] of this.containers.entries()) {
-      if (c === container) return id;
-    }
-    return undefined;
-  }
-
-  // Get direction vector pointing toward a container's opening
-  private getOpeningDirection(container: Container): Vec2 {
-    switch (container.opening) {
-      case 'top': return vec2(0, -1);
-      case 'bottom': return vec2(0, 1);
-      case 'left': return vec2(-1, 0);
-      case 'right': return vec2(1, 0);
-    }
-  }
-
-  // Get the center point of a container's opening
-  private getOpeningCenter(container: Container): Vec2 {
-    const x = container.worldX;
-    const y = container.worldY;
-    const w = container.width;
-    const h = container.height;
-
-    switch (container.opening) {
-      case 'top': return vec2(x + w / 2, y);
-      case 'bottom': return vec2(x + w / 2, y + h);
-      case 'left': return vec2(x, y + h / 2);
-      case 'right': return vec2(x + w, y + h / 2);
-    }
+    // Always attract toward the target container's center
+    // The walls will handle whether the voroboid can enter/exit
+    return targetContainer.getMagnet();
   }
 
   private render(): void {
@@ -419,55 +336,51 @@ export class VoroboidsSystem {
     this.ctx.fill();
   }
 
+  // Render walls with polarity-based visual styles
+  // inward: solid warm purple (trapping)
+  // outward: dashed cool teal (releasing)
+  // solid: thick dark line
+  // permeable: thin dotted
   private renderContainerWalls(container: Container): void {
-    this.ctx.strokeStyle = '#4a4a6a';
-    this.ctx.lineWidth = 3;
     this.ctx.lineCap = 'round';
 
-    this.ctx.beginPath();
     for (const wall of container.walls) {
+      this.ctx.beginPath();
       this.ctx.moveTo(wall.start.x, wall.start.y);
       this.ctx.lineTo(wall.end.x, wall.end.y);
+
+      switch (wall.polarity) {
+        case 'inward':
+          // Warm purple - trapping, cells can enter but not leave
+          this.ctx.strokeStyle = '#9b59b6';
+          this.ctx.lineWidth = 4;
+          this.ctx.setLineDash([]);
+          break;
+        case 'outward':
+          // Cool teal - releasing, cells can leave but not enter
+          this.ctx.strokeStyle = '#1abc9c';
+          this.ctx.lineWidth = 3;
+          this.ctx.setLineDash([8, 4]);
+          break;
+        case 'solid':
+          // Dark thick - blocks all passage
+          this.ctx.strokeStyle = '#2c3e50';
+          this.ctx.lineWidth = 5;
+          this.ctx.setLineDash([]);
+          break;
+        case 'permeable':
+          // Thin dotted - allows all passage
+          this.ctx.strokeStyle = '#7f8c8d';
+          this.ctx.lineWidth = 2;
+          this.ctx.setLineDash([2, 4]);
+          break;
+      }
+
+      this.ctx.stroke();
     }
-    this.ctx.stroke();
 
-    // Render opening side in pink
-    this.renderContainerOpening(container);
-  }
-
-  // Render the opening side of a container in pink
-  private renderContainerOpening(container: Container): void {
-    const x = container.worldX;
-    const y = container.worldY;
-    const w = container.width;
-    const h = container.height;
-
-    // Pink color for openings
-    this.ctx.strokeStyle = '#ff69b4'; // Hot pink
-    this.ctx.lineWidth = 4;
-    this.ctx.lineCap = 'round';
-
-    // Draw pink indicator on the opening side
-    this.ctx.beginPath();
-    switch (container.opening) {
-      case 'top':
-        this.ctx.moveTo(x, y);
-        this.ctx.lineTo(x + w, y);
-        break;
-      case 'bottom':
-        this.ctx.moveTo(x, y + h);
-        this.ctx.lineTo(x + w, y + h);
-        break;
-      case 'left':
-        this.ctx.moveTo(x, y);
-        this.ctx.lineTo(x, y + h);
-        break;
-      case 'right':
-        this.ctx.moveTo(x + w, y);
-        this.ctx.lineTo(x + w, y + h);
-        break;
-    }
-    this.ctx.stroke();
+    // Reset line dash
+    this.ctx.setLineDash([]);
   }
 
   private renderVoroboid(voroboid: Voroboid): void {
@@ -729,38 +642,41 @@ export class VoroboidsSystem {
     this.updateCanvasSize();
   }
 
-  // Rotate a container's opening
-  rotateContainer(containerId: string): void {
-    const container = this.containers.get(containerId);
-    if (container) {
-      container.rotateOpening();
-    }
-  }
-
-  // Swap active magnet - toggle which bucket's magnet is "on"
-  // Both buckets have magnets, this instantly switches which one is active
-  shiftMagnets(): void {
-    // Toggle between 'a' and 'b'
-    const newTarget = this.activeMagnetContainer === 'a' ? 'b' : 'a';
-    this.pourTo(newTarget);
-  }
-
-  // Pour all voroboids to a target container - immediate action!
+  // Pour all voroboids to a target container - Maxwell's Demon style!
+  // Source container: flip to outward (cells can escape)
+  // Target container: flip to inward (cells get trapped)
   pourTo(targetId: string): void {
     const targetContainer = this.containers.get(targetId);
     if (!targetContainer) return;
 
+    // Find the source container (the other one)
+    const sourceId = targetId === 'a' ? 'b' : 'a';
+    const sourceContainer = this.containers.get(sourceId);
+
+    // Flip polarities - the magic of Maxwell's Demon
+    if (sourceContainer) {
+      sourceContainer.setPolarity('outward');  // Release!
+    }
+    targetContainer.setPolarity('inward');     // Trap!
+
     this.activeMagnetContainer = targetId;
-    const opening = this.getOpeningCenter(targetContainer);
+    const center = targetContainer.getCenter();
 
     for (const voroboid of this.voroboids) {
-      const dist = magnitude(sub(voroboid.position, opening));
+      const dist = magnitude(sub(voroboid.position, center));
       voroboid.setTargetContainer(targetId, dist);
 
-      // Give a kick toward the opening
-      const toOpening = sub(opening, voroboid.position);
-      const kickDir = magnitude(toOpening) > 1 ? normalize(toOpening) : vec2(0, 0);
+      // Give a kick toward the target center
+      const toCenter = sub(center, voroboid.position);
+      const kickDir = magnitude(toCenter) > 1 ? normalize(toCenter) : vec2(0, 0);
       voroboid.velocity = add(voroboid.velocity, mul(kickDir, 3));
+    }
+  }
+
+  // Set all containers to solid (no passage) - initial stable state
+  solidifyAll(): void {
+    for (const container of this.containers.values()) {
+      container.setPolarity('solid');
     }
   }
 

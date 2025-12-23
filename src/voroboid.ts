@@ -19,7 +19,7 @@ export interface ContainerBounds {
 // Info about the target container for navigation
 export interface TargetContainerInfo {
   bounds: ContainerBounds;
-  opening: Vec2;          // Center point of the opening
+  center: Vec2;           // Center point of the container
 }
 
 export class Voroboid {
@@ -91,6 +91,34 @@ export class Voroboid {
            pos.y >= bounds.y && pos.y <= bounds.y + bounds.height;
   }
 
+  // Maxwell's Demon logic: determine if a wall should block based on polarity and velocity
+  // inward: blocks outward movement (dot < 0 means moving out)
+  // outward: blocks inward movement (dot > 0 means moving in)
+  // solid: always blocks
+  // permeable: never blocks
+  private wallShouldBlock(wall: Wall): boolean {
+    switch (wall.polarity) {
+      case 'solid':
+        return true;
+      case 'permeable':
+        return false;
+      case 'inward': {
+        // inward polarity = traps inside, allows entry
+        // Block if velocity is going OUT (opposite to inward normal)
+        const velDot = dot(this.velocity, wall.inwardNormal);
+        return velDot < -0.1; // Trying to leave - blocked
+      }
+      case 'outward': {
+        // outward polarity = releases, blocks entry
+        // Block if velocity is going IN (same direction as inward normal)
+        const velDot = dot(this.velocity, wall.inwardNormal);
+        return velDot > 0.1; // Trying to enter - blocked
+      }
+      default:
+        return true;
+    }
+  }
+
   // Main update - simple particle physics
   // 1. Repel from neighbors (spread out!)
   // 2. If outside target, seek the opening
@@ -130,40 +158,48 @@ export class Voroboid {
       }
     }
 
-    // FORCE 2: Seek target container if outside
+    // FORCE 2: Seek target container center if outside
+    // With Maxwell's Demon walls, we seek the center directly - walls will phase us through
     if (targetInfo) {
       const isInside = this.insideContainer(this.position, targetInfo.bounds);
 
       if (!isInside) {
-        // Seek the opening
-        const toOpening = sub(targetInfo.opening, this.position);
-        const dist = magnitude(toOpening);
+        // Seek the center (walls will let us through if polarity is right)
+        const toCenter = sub(targetInfo.center, this.position);
+        const dist = magnitude(toCenter);
         if (dist > 1) {
-          force = add(force, mul(normalize(toOpening), PHYSICS.SEEK_STRENGTH));
+          force = add(force, mul(normalize(toCenter), PHYSICS.SEEK_STRENGTH));
         }
       }
-      // Inside: repulsion from neighbors handles spreading - no center-based force needed
+      // Inside: repulsion from neighbors handles spreading
     }
 
-    // FORCE 3: Wall avoidance
+    // FORCE 3: Wall interaction - Maxwell's Demon style
+    // Walls only block if polarity doesn't allow the direction of movement
     for (const wall of walls) {
       const { point, distance } = pointToSegment(this.position, wall.start, wall.end);
       if (distance > 0 && distance < PHYSICS.WALL_RANGE) {
-        const away = normalize(sub(this.position, point));
-        const strength = PHYSICS.WALL_PUSH * Math.pow(1 - distance / PHYSICS.WALL_RANGE, 2);
-        force = add(force, mul(away, strength));
+        // Check if this wall should block us based on polarity and velocity
+        const shouldBlock = this.wallShouldBlock(wall);
 
-        // Hard boundary - don't go through walls
-        if (distance < 15) {
-          this.position = add(point, mul(away, 15));
-          // Bounce off wall
-          const wallVec = sub(wall.end, wall.start);
-          const wallNorm = normalize(vec2(-wallVec.y, wallVec.x));
-          const velDot = dot(this.velocity, wallNorm);
-          if (velDot < 0) {
-            this.velocity = sub(this.velocity, mul(wallNorm, velDot * 1.5));
+        if (shouldBlock) {
+          const away = normalize(sub(this.position, point));
+          const strength = PHYSICS.WALL_PUSH * Math.pow(1 - distance / PHYSICS.WALL_RANGE, 2);
+          force = add(force, mul(away, strength));
+
+          // Hard boundary - don't go through blocking walls
+          if (distance < 15) {
+            this.position = add(point, mul(away, 15));
+            // Bounce off wall
+            const wallVec = sub(wall.end, wall.start);
+            const wallNorm = normalize(vec2(-wallVec.y, wallVec.x));
+            const velDot = dot(this.velocity, wallNorm);
+            if (velDot < 0) {
+              this.velocity = sub(this.velocity, mul(wallNorm, velDot * 1.5));
+            }
           }
         }
+        // If wall doesn't block, voroboid phases right through like a ghost
       }
     }
 
