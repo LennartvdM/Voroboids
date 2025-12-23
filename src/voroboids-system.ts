@@ -170,12 +170,16 @@ export class VoroboidsSystem {
   }
 
   // Compute Voronoi-like polygons for all voroboids
-  // Cells clip against walls and neighbors - no container bounds needed
+  // Each voroboid clips against walls and neighbors, starting from its container bounds
   private computePolygons(): void {
     const allWalls = this.getAllWalls();
 
     for (const voroboid of this.voroboids) {
-      voroboid.computePolygon(this.voroboids, allWalls);
+      // Get the container bounds for this voroboid
+      const container = this.containers.get(voroboid.targetContainerId);
+      const containerBounds = container ? container.getBounds() : undefined;
+
+      voroboid.computePolygon(this.voroboids, allWalls, containerBounds);
     }
   }
 
