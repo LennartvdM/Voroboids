@@ -313,11 +313,38 @@ export class VoroboidsSystem {
 
       // DEBUG: Draw voroboid position, velocity, weight, and pressure
       if (this.debug) {
+        // Draw logical polygon outline (raw Voronoi - what territory is claimed)
+        // This shows the "forcefield" / sensing zone
+        if (voroboid.logicalPolygon.length >= 3) {
+          this.ctx.strokeStyle = 'rgba(255, 100, 100, 0.4)';
+          this.ctx.lineWidth = 1;
+          this.ctx.setLineDash([4, 4]);
+          this.ctx.beginPath();
+          const lp = voroboid.logicalPolygon;
+          this.ctx.moveTo(lp[0].x, lp[0].y);
+          for (let i = 1; i < lp.length; i++) {
+            this.ctx.lineTo(lp[i].x, lp[i].y);
+          }
+          this.ctx.closePath();
+          this.ctx.stroke();
+          this.ctx.setLineDash([]);
+        }
+
         // Position - small magenta dot
         this.ctx.fillStyle = '#ff00ff';
         this.ctx.beginPath();
         this.ctx.arc(voroboid.position.x, voroboid.position.y, 4, 0, Math.PI * 2);
         this.ctx.fill();
+
+        // Max extent circle (shows the constraint boundary)
+        const maxExtent = voroboid.blobRadius * voroboid.maxExtentRatio;
+        this.ctx.strokeStyle = 'rgba(255, 200, 100, 0.3)';
+        this.ctx.lineWidth = 1;
+        this.ctx.setLineDash([2, 4]);
+        this.ctx.beginPath();
+        this.ctx.arc(voroboid.position.x, voroboid.position.y, maxExtent, 0, Math.PI * 2);
+        this.ctx.stroke();
+        this.ctx.setLineDash([]);
 
         // Velocity vector - magenta line
         this.ctx.strokeStyle = '#ff00ff';
