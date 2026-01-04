@@ -325,3 +325,232 @@ export function pointInPolygon(point: Vec2, polygon: Vec2[]): boolean {
 
   return inside;
 }
+
+// =====================
+// Constrained polygon utilities
+// These transform a logical Voronoi polygon into a physical cell
+// that respects geometric constraints (max extent, min angle, convexity)
+// =====================
+
+/**
+ * Compute the angle at a vertex (in radians)
+ * Returns the interior angle at vertex `curr` formed by edges from prev and to next
+ */
+export function vertexAngle(prev: Vec2, curr: Vec2, next: Vec2): number {
+  const v1 = normalize(sub(prev, curr));
+  const v2 = normalize(sub(next, curr));
+
+  // Clamp dot product to avoid NaN from floating point errors
+  const d = clamp(dot(v1, v2), -1, 1);
+  return Math.acos(d);
+}
+
+/**
+ * Compute the minimum angle that can accommodate an inscribed circle of given radius
+ * at a corner. The formula: if a circle of radius r is inscribed in a corner,
+ * the half-angle α satisfies: r = d * tan(α/2) where d is distance from corner to tangent point
+ * For our constraint: we specify the radius and the offset distance.
+ */
+export function minAngleForInscribedBall(radius: number, offset: number): number {
+  // The inscribed ball constraint: a ball of `radius` must fit in the corner
+  // at a distance of `offset` from the vertex
+  // half-angle = atan(radius / offset)
+  // full interior angle = π - 2 * half-angle
+  const halfAngle = Math.atan2(radius, offset);
+  return Math.PI - 2 * halfAngle;
+}
+
+/**
+ * Check if a polygon is convex (all vertices turn the same direction)
+ */
+export function isConvex(polygon: Vec2[]): boolean {
+  if (polygon.length < 3) return false;
+
+  let sign = 0;
+  const n = polygon.length;
+
+  for (let i = 0; i < n; i++) {
+    const p1 = polygon[i];
+    const p2 = polygon[(i + 1) % n];
+    const p3 = polygon[(i + 2) % n];
+
+    // Cross product of edges
+    const cross = (p2.x - p1.x) * (p3.y - p2.y) - (p2.y - p1.y) * (p3.x - p2.x);
+
+    if (cross !== 0) {
+      if (sign === 0) {
+        sign = cross > 0 ? 1 : -1;
+      } else if ((cross > 0 ? 1 : -1) !== sign) {
+        return false; // Direction changed - not convex
+      }
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Compute the convex hull of a set of points using Graham scan
+ */
+export function convexHull(points: Vec2[]): Vec2[] {
+  if (points.length < 3) return [...points];
+
+  // Find the bottom-most point (or left-most in case of tie)
+  let minIdx = 0;
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].y < points[minIdx].y ||
+        (points[i].y === points[minIdx].y && points[i].x < points[minIdx].x)) {
+      minIdx = i;
+    }
+  }
+
+  const pivot = points[minIdx];
+
+  // Sort points by polar angle with respect to pivot
+  const sorted = points
+    .filter((_, i) => i !== minIdx)
+    .map(p => ({
+      point: p,
+      angle: Math.atan2(p.y - pivot.y, p.x - pivot.x),
+      dist: distance(p, pivot)
+    }))
+    .sort((a, b) => {
+      if (Math.abs(a.angle - b.angle) < 1e-10) {
+        return a.dist - b.dist; // Same angle, closer first
+      }
+      return a.angle - b.angle;
+    })
+    .map(p => p.point);
+
+  // Graham scan
+  const hull: Vec2[] = [pivot];
+
+  for (const p of sorted) {
+    // Remove points that make clockwise turn
+    while (hull.length > 1) {
+      const top = hull[hull.length - 1];
+      const second = hull[hull.length - 2];
+      const cross = (top.x - second.x) * (p.y - second.y) - (top.y - second.y) * (p.x - second.x);
+
+      if (cross <= 0) {
+        hull.pop();
+      } else {
+        break;
+      }
+    }
+    hull.push(p);
+  }
+
+  return hull;
+}
+
+/**
+ * Clamp polygon vertices to a maximum distance from center
+ * Vertices beyond maxExtent are pulled in along the ray from center
+ */
+export function clampPolygonExtent(polygon: Vec2[], center: Vec2, maxExtent: number): Vec2[] {
+  return polygon.map(vertex => {
+    const toVertex = sub(vertex, center);
+    const dist = magnitude(toVertex);
+
+    if (dist > maxExtent) {
+      // Pull vertex in to maxExtent
+      return add(center, mul(normalize(toVertex), maxExtent));
+    }
+    return vertex;
+  });
+}
+
+/**
+ * Enforce minimum corner angles by "cutting" corners that are too sharp
+ * Uses the inscribed ball constraint: each corner must fit a ball of given radius
+ *
+ * @param polygon - The polygon to constrain
+ * @param cornerRadius - Radius of the inscribed ball (same as visual corner rounding)
+ * @param ballOffset - How far into the corner the ball sits (affects min angle)
+ * @returns Polygon with sharp corners cut or pushed out
+ */
+export function enforceMinimumAngles(
+  polygon: Vec2[],
+  cornerRadius: number,
+  ballOffset: number = cornerRadius * 1.5
+): Vec2[] {
+  if (polygon.length < 3) return polygon;
+
+  const minAngle = minAngleForInscribedBall(cornerRadius, ballOffset);
+  const result: Vec2[] = [];
+  const n = polygon.length;
+
+  for (let i = 0; i < n; i++) {
+    const prev = polygon[(i - 1 + n) % n];
+    const curr = polygon[i];
+    const next = polygon[(i + 1) % n];
+
+    const angle = vertexAngle(prev, curr, next);
+
+    if (angle >= minAngle) {
+      // Corner is wide enough, keep it
+      result.push(curr);
+    } else {
+      // Corner is too sharp - cut it by adding two points
+      // The cut creates a new edge where the inscribed ball would be tangent
+
+      const toPrev = normalize(sub(prev, curr));
+      const toNext = normalize(sub(next, curr));
+
+      // Calculate how far along each edge to place the cut points
+      // This is where the inscribed ball would be tangent
+      const cutDist = ballOffset;
+
+      // Limit cut distance to half the edge length
+      const distToPrev = magnitude(sub(prev, curr));
+      const distToNext = magnitude(sub(next, curr));
+      const maxCut = Math.min(distToPrev, distToNext) * 0.4;
+      const actualCut = Math.min(cutDist, maxCut);
+
+      const cutPoint1 = add(curr, mul(toPrev, actualCut));
+      const cutPoint2 = add(curr, mul(toNext, actualCut));
+
+      result.push(cutPoint1, cutPoint2);
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Full constraint pipeline: apply all constraints to transform a logical Voronoi polygon
+ * into a physical cell polygon
+ *
+ * @param polygon - The raw Voronoi polygon
+ * @param center - Cell center point
+ * @param maxExtent - Maximum distance from center (prevents stretching)
+ * @param cornerRadius - Minimum inscribed ball radius (prevents sharp corners)
+ * @returns Constrained physical polygon
+ */
+export function constrainPolygon(
+  polygon: Vec2[],
+  center: Vec2,
+  maxExtent: number,
+  cornerRadius: number
+): Vec2[] {
+  if (polygon.length < 3) return polygon;
+
+  // Step 1: Clamp to maximum extent (prevents pizza stretching)
+  let constrained = clampPolygonExtent(polygon, center, maxExtent);
+
+  // Step 2: Ensure convexity (extent clamping can create concave shapes)
+  if (!isConvex(constrained)) {
+    constrained = convexHull(constrained);
+  }
+
+  // Step 3: Enforce minimum angles (inscribed ball constraint)
+  constrained = enforceMinimumAngles(constrained, cornerRadius);
+
+  // Step 4: Final convexity check (angle enforcement can theoretically break it)
+  if (!isConvex(constrained)) {
+    constrained = convexHull(constrained);
+  }
+
+  return constrained;
+}

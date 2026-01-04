@@ -40,6 +40,10 @@ export interface VoroboidConfig {
   color: string;
   weight: number;
   content?: VoroboidContent;  // Optional content to display
+
+  // Constraint parameters (optional - use defaults if not specified)
+  maxExtentRatio?: number;    // Max extent as multiple of blobRadius (default: 3.0)
+  cornerRadius?: number;      // Inscribed ball radius for corner constraint (default: 12)
 }
 
 export interface FlockConfig {

@@ -5,7 +5,8 @@ import type { Vec2, Wall, VoroboidConfig, FlockConfig, MagnetConfig, VoroboidCon
 import { PHYSICS } from './types';
 import {
   vec2, add, sub, mul, normalize, magnitude, lerpVec2, dot, pointToSegment,
-  clipPolygonByPlane, polygonArea as computePolygonArea, rectToPolygon
+  clipPolygonByPlane, polygonArea as computePolygonArea, rectToPolygon,
+  constrainPolygon
 } from './math';
 
 // Container bounds for containment checks
@@ -42,10 +43,15 @@ export class Voroboid {
   isSettled: boolean = false;      // For UI feedback only
 
   // Polygon tessellation
-  polygon: Vec2[] = [];              // Computed boundary vertices
+  polygon: Vec2[] = [];              // Physical (constrained) boundary for rendering
+  logicalPolygon: Vec2[] = [];       // Logical Voronoi polygon (territory)
   targetArea: number = 2500;         // Desired area (based on blobRadius^2 * π)
   currentArea: number = 0;           // Actual area of current polygon
   pressure: number = 1;              // Internal pressure = targetArea / currentArea
+
+  // Constraint parameters (prevent pizza stretching and sharp corners)
+  maxExtentRatio: number = 3.0;      // Max extent as multiple of blobRadius
+  cornerRadius: number = 12;          // Inscribed ball radius for corner constraint
 
   // Content
   content?: VoroboidContent;
@@ -62,6 +68,14 @@ export class Voroboid {
     // Target area based on blob radius (circle area = π * r²)
     // Weight affects target area - heavier voroboids want more space
     this.targetArea = Math.PI * this.blobRadius * this.blobRadius * this.weight;
+
+    // Constraint parameters from config (with defaults)
+    if (config.maxExtentRatio !== undefined) {
+      this.maxExtentRatio = config.maxExtentRatio;
+    }
+    if (config.cornerRadius !== undefined) {
+      this.cornerRadius = config.cornerRadius;
+    }
 
     // Set content and preload images
     if (config.content) {
@@ -353,10 +367,21 @@ export class Voroboid {
       }
     }
 
-    // Direct polygon update - smoothness comes from physics (high damping), not interpolation
-    this.polygon = polygon;
+    // Store the logical polygon (raw Voronoi - defines territory)
+    this.logicalPolygon = polygon;
 
-    // Update current area and pressure
+    // Apply geometric constraints to get the physical polygon (for rendering)
+    // This prevents pizza stretching and sharp corners
+    const maxExtent = this.blobRadius * this.maxExtentRatio;
+    this.polygon = constrainPolygon(
+      polygon,
+      this.position,
+      maxExtent,
+      this.cornerRadius
+    );
+
+    // Update current area and pressure based on PHYSICAL polygon
+    // This is what actually matters for how much space the cell occupies
     this.currentArea = Math.abs(computePolygonArea(this.polygon));
     if (this.currentArea > 0) {
       this.pressure = this.targetArea / this.currentArea;
