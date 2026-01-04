@@ -3,7 +3,7 @@
 
 import type { Vec2, VoroboidConfig, FlockConfig, Wall, MagnetConfig, WallPolarity } from './types';
 import { DEFAULT_FLOCK_CONFIG } from './types';
-import { Voroboid, TargetContainerInfo, ContainerBounds } from './voroboid';
+import { Voroboid, TargetContainerInfo } from './voroboid';
 import { Container } from './container';
 import { vec2, add, sub, mul, magnitude, normalize, insetPolygon } from './math';
 
@@ -196,32 +196,15 @@ export class VoroboidsSystem {
   }
 
   // Compute Voronoi-like polygons for all voroboids
-  // Each voroboid clips against walls and neighbors, starting from its CURRENT container bounds
-  // (based on physical position, not target - so cells don't shrink during transit)
+  // Each voroboid uses purely LOCAL information: neighbors and nearby walls
+  // No container bounds - cells don't know which container they're "in"
+  // This ensures smooth transitions between containers
   private computePolygons(): void {
     const allWalls = this.getAllWalls();
 
     for (const voroboid of this.voroboids) {
-      // Find which container the voroboid is actually IN based on position
-      // This prevents cells from shrinking during transit between containers
-      const containerBounds = this.getContainerBoundsForPosition(voroboid.position);
-
-      voroboid.computePolygon(this.voroboids, allWalls, containerBounds);
+      voroboid.computePolygon(this.voroboids, allWalls);
     }
-  }
-
-  // Find container bounds based on physical position (not target)
-  // Returns the bounds of whichever container contains the position
-  private getContainerBoundsForPosition(position: Vec2): ContainerBounds | undefined {
-    for (const container of this.containers.values()) {
-      const bounds = container.getBounds();
-      if (position.x >= bounds.x && position.x <= bounds.x + bounds.width &&
-          position.y >= bounds.y && position.y <= bounds.y + bounds.height) {
-        return bounds;
-      }
-    }
-    // If not in any container, return undefined (will use fallback rectangle)
-    return undefined;
   }
 
   // Get the magnet configuration for a voroboid based on its position

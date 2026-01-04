@@ -5,7 +5,7 @@ import type { Vec2, Wall, VoroboidConfig, FlockConfig, MagnetConfig, VoroboidCon
 import { PHYSICS } from './types';
 import {
   vec2, add, sub, mul, normalize, magnitude, lerpVec2, dot, pointToSegment,
-  clipPolygonByPlane, polygonArea as computePolygonArea, rectToPolygon,
+  clipPolygonByPlane, polygonArea as computePolygonArea, circleToPolygon,
   constrainPolygon
 } from './math';
 
@@ -271,34 +271,32 @@ export class Voroboid {
     return points;
   }
 
-  // Compute Voronoi-like polygon by clipping container bounds against walls and neighbor bisectors
-  // Start with the full container to ensure corners are filled, then clip down
-  computePolygon(neighbors: Voroboid[], walls: Wall[], containerBounds?: ContainerBounds): void {
-    // Start with the container rectangle - this ensures we can fill all the way to corners
-    // If no bounds provided, fall back to a large area around the voroboid
-    let polygon: Vec2[];
-    if (containerBounds) {
-      // Use container bounds with some padding to ensure full coverage
-      const padding = 10;
-      polygon = rectToPolygon(
-        containerBounds.x - padding,
-        containerBounds.y - padding,
-        containerBounds.width + padding * 2,
-        containerBounds.height + padding * 2
-      );
-    } else {
-      // Fallback: large rectangle centered on voroboid
-      const size = this.blobRadius * 8;
-      polygon = rectToPolygon(
-        this.position.x - size,
-        this.position.y - size,
-        size * 2,
-        size * 2
-      );
-    }
+  // Compute Voronoi-like polygon using purely LOCAL information:
+  // 1. Start with intrinsic max-extent circle (cell's natural territory)
+  // 2. Clip against nearby walls only (not container bounds)
+  // 3. Clip against neighbor bisectors
+  // This ensures smooth transitions - cells don't "jump" when crossing container boundaries
+  computePolygon(neighbors: Voroboid[], walls: Wall[]): void {
+    // Start with the cell's intrinsic shape: a circle at max extent
+    // This is the cell's "natural territory" before any constraints
+    const maxExtent = this.blobRadius * this.maxExtentRatio;
+    let polygon: Vec2[] = circleToPolygon(this.position, maxExtent, 24);
 
-    // Clip against all walls - cells squeeze through openings because openings have no walls
+    // Wall sensing range - only clip against walls we can actually "see"
+    // This should be larger than maxExtent to catch walls before we hit them
+    const wallSenseRange = maxExtent + 20;
+
+    // Clip against nearby walls only
+    // Cells only know about walls within sensing range - this is local knowledge
     for (const wall of walls) {
+      // Check if this wall is within sensing range
+      const { distance: distToWall } = pointToSegment(this.position, wall.start, wall.end);
+
+      if (distToWall > wallSenseRange) {
+        // Wall is too far - cell doesn't know about it
+        continue;
+      }
+
       // Compute wall perpendicular - we keep the side where the voroboid is
       const wallVec = sub(wall.end, wall.start);
       let perpendicular = normalize(vec2(-wallVec.y, wallVec.x));
@@ -322,8 +320,6 @@ export class Voroboid {
     // Clip against each neighbor's bisector
     // Use deterministic bisector computation to prevent overlaps:
     // Always compute from the perspective of the lower-ID cell
-    // IMPORTANT: Clip against ALL neighbors - with container bounds as starting polygon,
-    // distant cells can still overlap if they don't clip against each other
     for (const neighbor of neighbors) {
       if (neighbor.id === this.id) continue;
 
@@ -372,7 +368,7 @@ export class Voroboid {
 
     // Apply geometric constraints to get the physical polygon (for rendering)
     // This prevents pizza stretching and sharp corners
-    const maxExtent = this.blobRadius * this.maxExtentRatio;
+    // Note: maxExtent was already computed at the start of this function
     this.polygon = constrainPolygon(
       polygon,
       this.position,
